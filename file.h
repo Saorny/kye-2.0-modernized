@@ -17,7 +17,7 @@
 
 struct FileLike {
     uint16_t bytesRead;      // 0x00
-    uint16_t flags;          // 0x02
+    uint16_t  flags;          // 0x02
     uint8_t  fd;             // 0x04
     uint8_t  pad;            // 0x05
     uint16_t bufferSize;     // 0x06
@@ -29,6 +29,14 @@ struct FileLike {
 struct OpenFileEntry {
     FILE* handle;
     uint16_t flags;
+};
+
+enum FileOpenMode {
+    Invalid = 0,
+    Read = 1,
+    Write = 2,
+    ReadWrite = 3,
+    Append = 4
 };
 
 std::unordered_map<int, OpenFileEntry> g_openFileHandles;
@@ -46,5 +54,7 @@ extern uint16_t allowedAttributes;
 
 extern int (*g_customReadHandler)(void* dest, uint16_t size);
 extern int (*g_customWriteHandler)(const void* buffer, uint16_t size);
+extern void (*fileModeHook)();
+char g_buffer1044[256];
 
 #endif // FILE_H

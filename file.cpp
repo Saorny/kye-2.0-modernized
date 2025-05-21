@@ -12,89 +12,111 @@
 #include <windows.h>
 #include <tuple>
 #include <stdexcept>
+#include <cstring>
 #include "file.h"
 #include "error.h"
 #include "system.h"
 
 namespace fs = std::filesystem;
 
-int openFileHandler(const char* filename, uint16_t flags, uint16_t attrFlags) {
-    // Appliquer les flags globaux de compatibilité s'ils ne sont pas déjà présents
-    if ((flags & 0xC000) == 0) {
-        flags |= (globalCompatFlags & 0xC000);
-    }
-
-    // Vérifie les attributs existants du fichier
-    int attrResult = fileAttrOp(filename, 0);  // mode = 0
-    bool fileExists = (attrResult != -1);
-    int fd = -1;
-
-    // Si le flag 0x0100 est présent, il faut s'assurer que le fichier existe, ou le créer
-    if (flags & 0x0100) {
-        uint16_t filteredAttrs = attrFlags & allowedAttributes;
-
-        if ((filteredAttrs & 0x180) == 0) {
-            handleDosError(1); // Erreur d'attributs manquants
-        }
-
-        if (!fileExists) {
-            if (err != 2) { // err == 2 → "File not found"
-                handleDosError(err);
-                return -1;
-            }
-
-            // Si flag 0x80, on saute la création
-            if ((attrFlags & 0x80) == 0) {
-                int tempFd = createFile(attrFlags, filename);
-                if (tempFd < 0) return -1;
-                closeFile(tempFd);
-            }
-        }
-    }
-
-    // Ouvre le fichier
-    fd = openFile(filename, flags);
-    if (fd < 0) return fd;
-
-    // Appel ioctl(fd, 0)
-    int result = ioctl(fd, 0);
-    if (result & 0x80) {
-        flags |= 0x2000;
-
-        if (flags & 0x8000) {
-            int newVal = (result & 0x00FF) | 0x20;
-            ioctl(fd, 1, newVal); // subfunction 1
-        }
-    } else if (flags & 0x0200) {
-        testFileWriteability(fd);
-    }
-
-    // Mise à jour des attributs si nécessaires
-    if ((attrResult & 0x0001) && (flags & 0x0100) && (flags & 0x00F0)) {
-        fileAttrOp(filename, 1); // mode = 1 → mise à jour
-    }
-
-    // Calcul des flags à injecter dans fdFlags
-    uint16_t finalFlags = (flags & 0xF8FF); // On efface les bits 8 et 9
-
-    if (flags & 0x0300) {
-        finalFlags |= 0x1000;
-    }
-
-    if (attrResult & 0x0001) {
-        finalFlags |= 0x0100;
-    }
-
-    // Mise à jour dans la table des flags
-    g_fileFlags[fd] = finalFlags;
-
-    return fd;
+FileLike* openAndPrepareFileFromSlot(const char* filepath, const char* adviceType) {
+    FileLike* slot = findFreeFileSlot();
+    if (!slot) return nullptr;
+    return prepareAndOpenFile(slot, 0, adviceType, filepath);
 }
 
-int createFile(int attributes, const char* filename) {
-    int fd = -1;
+FileLike* findFreeFileSlot() {
+    for (int i = 0; i < maxFileCount; ++i) {
+        FileLike& file = fileTable[i];
+        if (static_cast<int8_t>(file.fd) < 0) {
+            return &file;
+        }
+    }
+    return nullptr;
+}
 
-    fd = dosCreateFile(attributes, filename);
+
+FileLike* prepareAndOpenFile(FileLike* file, uint16_t openFlags, const char* adviceType, const char* filepath) {
+    if (!file) return nullptr;
+
+    uint16_t requestedFlags = 0;
+    uint16_t attributeFlags = 0;
+    int mode = prepareFileInfo(adviceType, &attributeFlags, &requestedFlags); 
+    file->flags = mode;
+
+    if (mode == 0 || file->fd >= 0) {
+        file->fd = -1;
+        file->flags = 0;
+        return nullptr;
+    }
+
+    // Ouverture du fichier
+    int finalFlags = attributeFlags | openFlags;
+    int handle = openFileHandler(filepath, finalFlags, (finalFlags & 0x00F0) != 0);
+    if (handle < 0) {
+        file->fd = -1;
+        file->flags = 0;
+        return nullptr;
+    }
+
+    file->fd = static_cast<uint8_t>(handle);
+
+    if (getAdviceInfo(handle)) {
+        file->flags |= 0x0200;
+    }
+
+    bool needsInit = (file->flags & 0x0200);
+    int param = needsInit ? 1 : 0;
+
+    if (!validateFile(file, 0, param)) {
+        cleanFile(file);
+        return nullptr;
+    }
+
+    file->pad = 0;
+    return file;
+}
+
+
+int openFileHandler(const std::string& filepath, uint16_t flags, bool isNewFile) {
+    int initialAttr = fileAttrOp(filepath.c_str(), 0, 0);
+    if (initialAttr == -1 && err != 2) {
+        handleDosError(err);
+        return -1;
+    }
+
+    int tmpFd = createFile(filepath.c_str(), isNewFile ? 0 : initialAttr);
+    if (tmpFd < 0) return -1;
+    closeFile(tmpFd);
+
+    int handle = openFile(filepath.c_str(), flags);
+    if (handle < 0) return -1;
+
+    uint16_t fileInfo = ioctl(handle, 0, 0, 0);
+    if (fileInfo & 0x80) {
+        flags |= 0x2000;
+        if (flags & 0x8000) {
+            uint16_t modAttr = (fileInfo & 0xFF) | 0x20;
+            ioctl(handle, 1, modAttr, 0);
+        }
+    } else if (flags & 0x0200) {
+        testFileWriteability(handle);
+    }
+
+    if ((initialAttr & 0x01) && (flags & 0x0100) && (flags & 0x00F0)) {
+        fileAttrOp(filepath.c_str(), 1, 0x01);
+    }
+
+    uint16_t newFlags = (flags & 0xF8FF);
+    if (flags & 0x0300) newFlags |= 0x1000;
+    if (!(initialAttr & 0x01)) newFlags |= 0x0100;
+
+    fdFlags[handle] = newFlags;
+    return handle;
+}
+
+int createFile(const char* filename, int attributes) {
+    int fd = dosCreateFile(filename, attributes);
 
     if (fd < 0) {
         handleDosError(fd);  // Même nom que dans l'asm
@@ -103,7 +125,7 @@ int createFile(int attributes, const char* filename) {
     return fd;
 }
 
-int dosCreateFile(int attributes, const char* filename) {
+int dosCreateFile(const char* filename, int attributes) {
     // À adapter avec des appels système modernes si besoin
     std::ofstream file(filename, std::ios::out | std::ios::trunc);
     if (!file.is_open()) {
@@ -355,7 +377,7 @@ int readTextBuffer(int fd, char* buffer, int size) {
         char c = *src++;
         if (c == 0x1A) {  // EOF in DOS text files
             // Rewind file by remaining characters
-            moveFilePointerExtended(fd, -count - 1, SEEK_CUR);
+            moveFilePointerExtended(fd, -count - 1, SEEK_CUR, 0);
             fdFlags[fd] |= 0x200;
             break;
         } else if (c == '\r') {
@@ -632,14 +654,13 @@ void writeByteToBufferAndDecrementCounter(uint8_t* buffer, uint8_t value, uint8_
 int closeFile(int fd) {
     auto it = g_openFileHandles.find(fd);
     if (it == g_openFileHandles.end()) {
-        // Handle invalide
-        handleDosError(6); // 6 = "Invalid handle" en DOS
+        handleDosError(6); // 6 = Invalid handle
         return -1;
     }
 
-    FILE* file = it->second;
+    FILE* file = it->second.handle;
     if (std::fclose(file) != 0) {
-        handleDosError(5); // 5 = "Access denied"
+        handleDosError(5); // 5 = Access denied
         return -1;
     }
 
@@ -720,4 +741,170 @@ int writeFile(int fd, const void* buffer, uint16_t size) {
     g_fileFlags[fd] |= 0x1000;
 
     return static_cast<int>(written);
+}
+
+FileOpenMode prepareFileInfo(
+    const char* adviceTypeStr,
+    uint16_t* outAttributeFlags,
+    uint16_t* outRequestedFlags
+) {
+    if (!adviceTypeStr || !outAttributeFlags || !outRequestedFlags)
+        return FileOpenMode::Invalid;
+
+    uint16_t attrFlags = 0;
+    uint16_t reqFlags = 0;
+    FileOpenMode result = FileOpenMode::Invalid;
+
+    char modeChar = adviceTypeStr[0];
+    switch (modeChar) {
+        case 'r': attrFlags = 0x0001; result = FileOpenMode::Read; break;
+        case 'w': attrFlags = 0x0302; reqFlags = 0x0080; result = FileOpenMode::Write; break;
+        case 'a': attrFlags = 0x0902; reqFlags = 0x0080; result = FileOpenMode::Append; break;
+        default: return FileOpenMode::Invalid;
+    }
+
+    char nextChar = adviceTypeStr[1];
+    if (nextChar == '+') {
+        attrFlags = (attrFlags & 0xFFFC) | 0x0004;
+        reqFlags = 0x0180;
+        result = FileOpenMode::ReadWrite;
+
+        char thirdChar = adviceTypeStr[2];
+        if (thirdChar == 't') {
+            attrFlags |= 0x4000;
+        } else if (thirdChar == 'b') {
+            attrFlags |= 0x8000;
+        } else {
+            attrFlags |= (globalCompatFlags & 0xC000);
+            if (attrFlags & 0x8000)
+                result = static_cast<FileOpenMode>(static_cast<int>(result) | static_cast<int>(FileOpenMode::BinaryModeFlag));
+        }
+    } else {
+        if (nextChar == 't') {
+            attrFlags |= 0x4000;
+        } else if (nextChar == 'b') {
+            attrFlags |= 0x8000;
+        } else {
+            attrFlags |= (globalCompatFlags & 0xC000);
+            if (attrFlags & 0x8000)
+                result = static_cast<FileOpenMode>(static_cast<int>(result) | static_cast<int>(FileOpenMode::BinaryModeFlag));
+        }
+    }
+
+    *outAttributeFlags = attrFlags;
+    *outRequestedFlags = reqFlags;
+    fileModeHook = cleanupAllOpenFiles;
+    return result;
+}
+
+void cleanupAllOpenFiles() {
+    for (int i = 0; i < maxFileCount; ++i) {
+        FileLike& file = fileTable[i];
+        if (file.flags & (FILE_FLAG_WRITEONLY | FILE_FLAG_READONLY)) {
+            cleanFile(&file);  // nettoyage si fichier actif
+        }
+    }
+}
+
+int cleanFile(FileLike* file) {
+    int result = -1;
+
+    if (file->bufferStart != reinterpret_cast<char*>(file)) {
+        if (file->bufferSize != 0) {
+            if (file->bytesRead < 0) {
+                if (flushTextBuffer(file) != 0) {
+                    return result;
+                }
+            }
+
+            if (file->flags & 0x0004) {
+                freeLocalMemory(file->buffer);
+            }
+        }
+
+        if (file->fd >= 0) {
+            int handle = static_cast<uint8_t>(file->fd);
+            closeFileHandle(handle);
+        }
+
+        file->flags = 0;
+        file->bufferSize = 0;
+        file->bytesRead = 0;
+        file->fd = 0xFF;
+
+        if (file->pad != 0) {
+            prepareAndRelease(0, 0, file->pad);  // Libère ou annule ce qui est pointé par pad
+            deleteFile(file->bufferStart);     // Supprime fichier temporaire ?
+            file->pad = 0;
+        }
+    }
+
+    return result;
+}
+
+int freeLocalMemory(void* ptr) {
+    // return LocalFree(ptr);
+    // return delete (ptr);
+    return 0;
+}
+
+uint16_t prepareAndRelease(void* ptr, uint16_t value, uint16_t fallback) {
+    const char* src = (fallback != 0) ? reinterpret_cast<const char*>(fallback) : reinterpret_cast<const char*>(0x2ED2);
+    uint16_t ax = (value != 0) ? value : 0x1040;
+
+    char* dest = reinterpret_cast<char*>(ptr);
+    uint16_t result = writeStringAndAdvance(dest, src);
+
+    callWithAudit(result);
+    copySecondStringIntoFirst(g_buffer1044, src);
+
+    return reinterpret_cast<uint16_t>(src);
+}
+
+uint16_t writeStringAndAdvance(char* dest, const char* src) {
+    size_t len = std::strlen(src);
+    copyMemory(dest, src, static_cast<uint16_t>(len + 1));  // +1 pour le '\0'
+    return reinterpret_cast<uint16_t>(dest + len);        // adresse après la chaîne
+}
+
+uint16_t copyMemory(char* dest, const char* src, uint16_t size) {
+    std::memcpy(dest, src, size);  // std::memcpy est safe et optimisé
+    return reinterpret_cast<uint16_t>(dest);  // retour identique à l'asm
+}
+
+void copySecondStringIntoFirst(char* dest, const char* src) {
+    size_t len = std::strlen(src);
+    std::memmove(dest, src, len + 1);
+}
+
+void callWithAudit(uint32_t value) {
+    formatAndWriteDecimal('a', false, 10, value, g_buffer1044);
+}
+
+void formatAndWriteDecimal(
+    char baseChar,       // usually 'a'
+    bool isNegative,     // from arg_2
+    uint16_t radix,      // from arg_4 (e.g., 10)
+    uint32_t value,      // composed from arg_8:arg_A
+    char* dest           // output destination
+) {
+    char temp[34];
+    int i = 0;
+
+    if (isNegative && static_cast<int32_t>(value) < 0) {
+        *dest++ = '-';
+        value = -static_cast<int32_t>(value);
+    }
+
+    do {
+        temp[i++] = value % radix;
+        value /= radix;
+    } while (value > 0);
+
+    while (i--) {
+        char digit = temp[i];
+        *dest++ = (digit < 10) ? (digit + '0') : (digit + baseChar);
+    }
+
+    *dest = '\0';
 }

@@ -20,8 +20,7 @@
 
 #define fdFlags reinterpret_cast<uint16_t*>(0x0FB8);g_windowHandleuint32_t)(segment) << 4) + (offset)))
 
-int allowedAttributes = 0x0FFFF;
-int globalCompatFlags = 0x4000; 
+
 std::unordered_map<int, std::ofstream> openFiles;
 int nextFd = 0;
 

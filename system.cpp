@@ -76,35 +76,28 @@ bool getAdviceInfo(int fd) {
     return it->second; // true si c'est un device (bit 0x80)
 }
 
-int ioctl(int fd, uint8_t subfunction, uint16_t dxValue, uint16_t cxValue) {
-    bool success = false;
-    uint16_t result = 0;
+int ioctl(int fd, int subfunction, int val1, int val2) {
+    uint16_t dx = static_cast<uint16_t>(val1);
+    uint16_t cx = static_cast<uint16_t>(val2);
+    uint16_t ax = 0;
 
-    // Simule ici quelques sous-fonctions IOCTL connues
-    switch (subfunction) {
-        case 0x00: { // GET DEVICE INFO
-            // On renvoie ici un flag simulé pour le device (bit 0x80 = is device)
-            result = (g_fileFlags[fd] & 0x0080) ? 0x0080 : 0x0000;
-            success = true;
-            break;
+    bool error = false;
+
+    // Simuler l’appel système DOS
+    // Remplace ce bloc par ton propre système ou couche d’émulation DOS si nécessaire
+    if (/* simulate error, e.g., fd invalid */ false) {
+        ax = 0x0001; // Code erreur fictif
+        error = true;
+    } else {
+        if (subfunction == 0x00) {
+            dx = 0x0080; // Ex. device info
         }
-        case 0x01: // AUTRE OPÉRATION IOCTL → à implémenter si besoin
-            success = true;
-            break;
-        default:
-            handleDosError(1); // fonction inconnue
-            return -1;
+        ax = dx; // Si subfunction == 0, on renvoie dx dans ax
     }
 
-    if (!success) {
-        handleDosError(1); // par défaut
-        return -1;
+    if (error) {
+        handleDosError(ax); // Fonction à implémenter ailleurs
     }
 
-    // Si c'était une sous-fonction 0x00 (lecture d'information), retourne result
-    if (subfunction == 0x00) {
-        return result;
-    }
-
-    return 0; // pour toutes les autres, pas de valeur à retourner
+    return (subfunction == 0) ? dx : 0;
 }

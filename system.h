@@ -28,6 +28,11 @@ struct DosTimeRaw {
     uint16_t sec_centi;    // DX
 };
 
+enum class IoctlResult {
+    Success,
+    Error
+};
+
 extern std::unordered_map<int, bool> g_isDeviceHandle;
 bool getAdviceInfo(int fd);
 
