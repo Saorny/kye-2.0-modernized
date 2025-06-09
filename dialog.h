@@ -13,7 +13,14 @@ char g_inputBuffer[256];
 
 bool isWindowsResourceAllocated = false;
 
-HDC g_deviceContext;
-HWND g_windowHandle;
+HDC g_deviceContext = nullptr;
+HWND g_windowHandle = nullptr;
+bool isWindowsResourceAllocated = false;
+
+void initializeWindowHandleIfNeeded();
+void releaseDialogResources();
+void showFinalDialog();
+void showLevelDoneDialog();
+void showGameOverDialog();
 
 #endif // DIALOG_H

@@ -7,6 +7,7 @@
 #include "system.h"
 #include "file.h"
 #include "error.h"
+#include "game.h"
 
 bool setCurrentTimeRaw(const DosTimeRaw* time) {
     if (!time) return false;
@@ -41,27 +42,40 @@ bool setCurrentDateRaw(const DosDateRaw* date) {
     return true; // AL = 0
 }
 
-void getCurrentDate(DosDate* out) {
+void getCurrentTime(uint16_t* out) {
     if (!out) return;
-
     std::time_t t = std::time(nullptr);
     std::tm* now = std::localtime(&t);
 
-    out->year  = now->tm_year + 1900;
-    out->month = now->tm_mon + 1;
-    out->day   = now->tm_mday;
+    DosTime d {
+        .hour   = static_cast<uint8_t>(now->tm_hour),
+        .minute = static_cast<uint8_t>(now->tm_min),
+        .second = static_cast<uint8_t>(now->tm_sec)
+    };
+
+    *out = encodeDosTime(d);
 }
 
-void getCurrentTime(DosTime* out) {
-    if (!out) return;
+uint16_t encodeDosDate(const DosDate& d) {
+    return ((d.year - 1980) << 9) | (d.month << 5) | (d.day);
+}
 
+uint16_t encodeDosTime(const DosTime& t) {
+    return (t.hour << 11) | (t.minute << 5) | (t.second / 2);
+}
+
+void getCurrentDate(uint16_t* out) {
+    if (!out) return;
     std::time_t t = std::time(nullptr);
     std::tm* now = std::localtime(&t);
 
-    out->hour       = now->tm_hour;
-    out->minute     = now->tm_min;
-    out->second     = now->tm_sec;
-    out->hundredths = 0; // approximation, car std::tm ne donne pas mieux
+    DosDate d {
+        .year  = static_cast<uint16_t>(now->tm_year + 1900),
+        .month = static_cast<uint8_t>(now->tm_mon + 1),
+        .day   = static_cast<uint8_t>(now->tm_mday)
+    };
+
+    *out = encodeDosDate(d);
 }
 
 bool getAdviceInfo(int fd) {
@@ -100,4 +114,9 @@ int ioctl(int fd, int subfunction, int val1, int val2) {
     }
 
     return (subfunction == 0) ? dx : 0;
+}
+
+void seedGameRNG(uint16_t seed) {
+    randomSeedHigh = 0;
+    randomSeedLow = seed;
 }

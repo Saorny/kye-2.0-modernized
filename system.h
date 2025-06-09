@@ -37,5 +37,8 @@ extern std::unordered_map<int, bool> g_isDeviceHandle;
 bool getAdviceInfo(int fd);
 
 int ioctl(int fd, uint8_t subfunction, uint16_t dxValue, uint16_t cxValue);
+void getCurrentDate(uint16_t* out);
+void getCurrentTime(uint16_t* out);
+void seedGameRNG(uint16_t seed);
 
 #endif // TIME_H

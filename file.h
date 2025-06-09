@@ -16,7 +16,7 @@
 #define fdFlags ((uint16_t*)0x0FB8)
 
 struct FileLike {
-    uint16_t bytesRead;      // 0x00
+    uint16_t count;      // 0x00
     uint16_t  flags;          // 0x02
     uint8_t  fd;             // 0x04
     uint8_t  pad;            // 0x05
@@ -36,7 +36,8 @@ enum FileOpenMode {
     Read = 1,
     Write = 2,
     ReadWrite = 3,
-    Append = 4
+    Append = 4,
+    BinaryModeFlag  = 0x100
 };
 
 std::unordered_map<int, OpenFileEntry> g_openFileHandles;
@@ -54,7 +55,29 @@ extern uint16_t allowedAttributes;
 
 extern int (*g_customReadHandler)(void* dest, uint16_t size);
 extern int (*g_customWriteHandler)(const void* buffer, uint16_t size);
-extern void (*fileModeHook)();
+extern void (*setupFileMode)();
 char g_buffer1044[256];
+bool hasValidatedE86FileOnce = false;
+bool hasValidatedFile_E76 = false;
+using FileCallback = void(*)();
+
+FileCallback validateBuffer;
+int fileAccessEnabled = 100;
+int totalBlockCount = 1;
+char lastWrittenChar = 0;
+
+int cleanFile(FileLike* file);
+int readStructuredBlock(FileLike* file, char* outBuf);
+int readLineToBuffer(FileLike *file, char *outBuf, int maxLen);
+int resetAndSeekFile(FileLike *file, int mode);
+FileLike* openAndPrepareFileFromSlot(const char* filepath, const char* adviceType);
+
+struct SegmentOffsetEntry {
+    uint16_t segment;
+    uint16_t offset;
+    uint8_t value;
+};
+
+SegmentOffsetEntry mappedTable[64];
 
 #endif // FILE_H

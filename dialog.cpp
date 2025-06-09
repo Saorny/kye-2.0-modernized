@@ -102,3 +102,52 @@ void showFileMessage(const char* message) {
     // Appel de MessageBoxA (version ANSI, compatible avec const char*)
     MessageBoxA(GetDesktopWindow(), message, filename, MB_ICONINFORMATION | MB_OK);
 }
+
+void showFinalDialog() {
+    FARPROC dlgProc = MAKEPROCINSTANCE(DLG_OK_FUNC, hInstanceTmp);
+
+    DialogBox(
+        hInstanceTmp,
+        "DLG_LAST",
+        reinterpret_cast<HWND>(g_deviceContext),  // ← probablement une erreur !
+        reinterpret_cast<DLGPROC>(dlgProc)
+    );
+
+    FREEPROCINSTANCE(dlgProc);
+}
+
+void showLevelDoneDialog() {
+    FARPROC dlgProc = MAKEPROCINSTANCE(DLG_LVLDUN_FUNC, hInstanceTmp);
+
+    DialogBox(
+        hInstanceTmp,
+        "DLG_DUN1",
+        reinterpret_cast<HWND>(g_deviceContext),  // ⚠️ attention ici aussi
+        reinterpret_cast<DLGPROC>(dlgProc)
+    );
+
+    FREEPROCINSTANCE(dlgProc);
+}
+
+void showGameOverDialog() {
+    FARPROC dlgProc = MAKEPROCINSTANCE(DLG_KYESGONE_FUNC, hInstanceTmp);
+
+    DialogBox(
+        hInstanceTmp,
+        "DLG_GON1",
+        reinterpret_cast<HWND>(g_deviceContext),  // ⚠️ encore douteux
+        reinterpret_cast<DLGPROC>(dlgProc)
+    );
+
+    FREEPROCINSTANCE(dlgProc);
+}
+
+void showWhatDialog() {
+    FARPROC dlgProc = MAKEPROCINSTANCE(DLG_OK_FUNC, hInstanceTmp);
+
+    // Affiche une boîte de dialogue modale
+    DIALOGBOX(hInstanceTmp, "DLG_WHAT", g_deviceContext, dlgProc);
+
+    // Libère la procédure une fois la boîte fermée
+    FREEPROCINSTANCE(dlgProc);
+}
