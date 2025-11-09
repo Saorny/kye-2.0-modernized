@@ -360,17 +360,17 @@ void renderEntityToWindow(int entityIndex) {
     int spriteX = 0;
     int spriteY = 0;
 
-    if (e.type < 0x17) {
-        spriteX = e.type * 16;
+    if (e.actionCode < 0x17) {
+        spriteX = e.actionCode * 16;
         spriteY = 0;
-    } else if (e.type >= 0x32 && e.type <= 0x3B) {
-        spriteX = e.type * 16;
+    } else if (e.actionCode >= 0x32 && e.actionCode <= 0x3B) {
+        spriteX = e.actionCode * 16;
         spriteY = 0x0F00; // = 0xFCE0 − 0xE0
-    } else if (e.type >= 0x0F && e.type <= 0x13) {
-        spriteX = e.type * 16;
+    } else if (e.actionCode >= 0x0F && e.actionCode <= 0x13) {
+        spriteX = e.actionCode * 16;
         spriteY = e.subtype * 16;
     } else {
-        spriteX = e.type * 16;
+        spriteX = e.actionCode * 16;
         spriteY = 0;
     }
 

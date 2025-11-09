@@ -295,3 +295,4 @@ bool flushBuffer(uint8_t* bufferStart, uint8_t*& writePtr, int& bufferRemaining,
 
     return !flushFailed;
 }
+

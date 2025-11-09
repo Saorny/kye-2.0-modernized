@@ -14,19 +14,15 @@
 #include <windows.h>
 #include <tuple>
 #include <stdexcept>
+#include <array>
+#include <vector>
+#include <cstring>
 #include "file.h"
 
 struct Entity {
     uint16_t position;  // +0 : probablement une coordonnée ou un index
     uint8_t width;      // +2 : largeur
     uint8_t height;     // +3 : hauteur
-};
-
-struct EntityParams {
-    uint8_t param0;     // +0 : poids ? score de base ?
-    uint8_t param1;     // +1 : offset additionnel
-    uint8_t unused;     // +2 : pas utilisé ici
-    uint8_t param3;     // +3 : bonus/malus final
 };
 
 struct TileMapping {
@@ -119,8 +115,6 @@ uint16_t randomSeedLow = 0x4E35;   // Valeur d'initialisation utilisée dans le 
 uint16_t randomSeedHigh = 0x015A;  // Pareil
 int previousCol = 0;
 int previousRow = 0;
-int row = 0;
-int col = 0;
 int mouseCaptureFlag = 0;
 int someGlobalCondition = 0;
 extern char** environmentList; 
@@ -129,8 +123,8 @@ int frameCounter = 0;
 
 const char* MSG_CANNOT_OPEN_FILE = "Cannot open file: ";
 
-struct EntityParams {
-    int type;
+struct EntityActionStruct {
+    int actionCode;
     int row;
     int col;
     int timer;
@@ -138,39 +132,164 @@ struct EntityParams {
 
 class GameState {
 public:
-    static constexpr int GRID_ROWS = 40;
-    static constexpr int GRID_COLS = 40;
-    static constexpr int NUM_ENTITIES = 256;
+    static constexpr int GRID_ROWS = 20;
+    static constexpr int GRID_COLS = 30;
+    static constexpr int MAX_NUM_ENTITIES = 256;
 
-    std::vector<EntityParams> entities;  // 0x172E, 0x1730, 0x1732, 0x1734 combinés
+    std::vector<EntityActionStruct> entities;  // 0x172E, 0x1730, 0x1732, 0x1734 combinés
 
-    int entityMap[GRID_ROWS][GRID_COLS];         // 0x1280
-    int rightEntityMap[GRID_ROWS][GRID_COLS];    // 0x127C
-    int leftEntityMap[GRID_ROWS][GRID_COLS];     // 0x122E
-    int topEntityMap[GRID_ROWS][GRID_COLS];      // 0x1256
-    int bottomEntityMap[GRID_ROWS][GRID_COLS];   // 0x12A6
+    int entityMap[GRID_ROWS][GRID_COLS]        = { 0 }; // 0x1280
+    int rightEntityMap[GRID_ROWS][GRID_COLS]   = { 0 }; // 0x127C
+    int leftEntityMap[GRID_ROWS][GRID_COLS]    = { 0 }; // 0x122E
+    int topEntityMap[GRID_ROWS][GRID_COLS]     = { 0 }; // 0x1256
+    int bottomEntityMap[GRID_ROWS][GRID_COLS]  = { 0 }; // 0x12A6
 
-    std::vector<int> bottomLeftEntityTable;      // 0x12CE (guess)
+    int auxTopRightEntityMap[GRID_ROWS][GRID_COLS]    = { 0 }; // [base+1258h]
+    int auxBottomRightEntityMap[GRID_ROWS][GRID_COLS] = { 0 }; // [base+12A8h]
+
+    int auxMap1282[GRID_ROWS][GRID_COLS] = { 0 }; // 0x1282
+    int auxMap127A[GRID_ROWS][GRID_COLS] = { 0 }; // 0x127A
+    int auxMap12CE[GRID_ROWS][GRID_COLS] = { 0 }; // 0x12CE
+    std::vector<int> bottomLeftEntityTable;        // 0x12CE (guess)
 
     GameState() {
-        entities.resize(NUM_ENTITIES, {0, 0, 0, 0});
-        bottomLeftEntityTable.resize(NUM_ENTITIES, -1);
+        entities.resize(MAX_NUM_ENTITIES, {0, 0, 0, 0});
+        bottomLeftEntityTable.resize(MAX_NUM_ENTITIES, -1);
 
         std::memset(entityMap, -1, sizeof(entityMap));
         std::memset(rightEntityMap, -1, sizeof(rightEntityMap));
         std::memset(leftEntityMap, -1, sizeof(leftEntityMap));
         std::memset(topEntityMap, -1, sizeof(topEntityMap));
         std::memset(bottomEntityMap, -1, sizeof(bottomEntityMap));
+        std::memset(auxTopRightEntityMap,    0xFF, sizeof(auxTopRightEntityMap));    // -1
+        std::memset(auxBottomRightEntityMap, 0xFF, sizeof(auxBottomRightEntityMap)); // -1
+        std::memset(auxMap1282,              0xFF, sizeof(auxMap1282));
+        std::memset(auxMap127A,              0xFF, sizeof(auxMap127A));
+        std::memset(auxMap12CE,              0xFF, sizeof(auxMap12CE));
     }
 };
 
 GameState g_gameState;
 
+inline int g_newRow = -1;
+inline int g_newCol = -1;
 
 void resetLevelStateMemory();
-uint32_t computeAdjustedTime(Entity* entity, const EntityParams* params);
+uint32_t computeAdjustedTime(Entity* entity, const EntityActionStruct* params);
 void startPollingTimer();
 
 using WriteCallback = void(*)(char*& writePtr, const char* src, int length);
+
+enum class EntityClass : uint8_t {
+    Empty  = 0,
+    Fixed  = 1,
+    Mobile = 2,
+    Player = 3
+};
+
+// 02C0
+struct EntityMappingEntry {
+    EntityClass category;  // octet 0 : 0,1,2,3
+    uint8_t     unk;       // octet 1 : toujours 0 ici
+    int16_t     param;     // octets 2–3 : ex. 0xFFFD, 0x0001, ...
+    char        asciiChar; // octet 4 : ' ', 'K', '1', ...
+};
+
+
+constexpr std::array<EntityMappingEntry, 56> ENTITY_MAPPINGS = {{
+    // idx  class         unk   param     char   // commentaire
+    { EntityClass::Empty,  0x00, 0x0000,  ' ' }, // 0  - Empty
+    { EntityClass::Player, 0x00, 0x0000,  'K' }, // 1  - Kye
+
+    // Murs / blocs fixes (param = 0xFFFD .. 0xFFF4)
+    { EntityClass::Fixed,  0x00, 0xFFFD,  '1' }, // 2  - Wall1
+    { EntityClass::Fixed,  0x00, 0xFFFC,  '2' }, // 3  - Wall2
+    { EntityClass::Fixed,  0x00, 0xFFFB,  '3' }, // 4  - Wall3
+    { EntityClass::Fixed,  0x00, 0xFFFA,  '4' }, // 5  - Wall4
+    { EntityClass::Fixed,  0x00, 0xFFF9,  '5' }, // 6  - Wall5 (mur standard)
+    { EntityClass::Fixed,  0x00, 0xFFF8,  '6' }, // 7  - Wall6
+    { EntityClass::Fixed,  0x00, 0xFFF7,  '7' }, // 8  - Wall7
+    { EntityClass::Fixed,  0x00, 0xFFF6,  '8' }, // 9  - Wall8
+    { EntityClass::Fixed,  0x00, 0xFFF5,  '9' }, // 10 - Wall9
+
+    // Spéciaux fixes
+    { EntityClass::Fixed,  0x00, 0xFFF4,  'e' }, // 11 - Yellow/destructible brick
+    { EntityClass::Fixed,  0x00, 0xFFF3,  '*' }, // 12 - Diamond
+    { EntityClass::Fixed,  0x00, 0xFFF2,  'f' }, // 13 - OneWayLeftToRight
+    { EntityClass::Fixed,  0x00, 0xFFF1,  'g' }, // 14 - OneWayRightToLeft
+    { EntityClass::Fixed,  0x00, 0xFFF0,  'h' }, // 15 - OneWayTopToBottom
+    { EntityClass::Fixed,  0x00, 0xFFEF,  'i' }, // 16 - OneWayBottomToTop
+
+    // Mobiles “simples”
+    { EntityClass::Mobile, 0x00, 0x0000,  'b' }, // 17 - PushableBrick
+    { EntityClass::Mobile, 0x00, 0x0001,  'u' }, // 18 - ArrowUp (block)
+    { EntityClass::Mobile, 0x00, 0x0002,  'd' }, // 19 - ArrowDown (block)
+    { EntityClass::Mobile, 0x00, 0x0003,  'l' }, // 20 - ArrowLeft (block)
+    { EntityClass::Mobile, 0x00, 0x0004,  'r' }, // 21 - ArrowRight (block)
+    { EntityClass::Mobile, 0x00, 0x0005,  's' }, // 22 - MagnetVertical
+    { EntityClass::Mobile, 0x00, 0x0006,  'S' }, // 23 - MagnetHorizontal
+    { EntityClass::Mobile, 0x00, 0x0007,  'U' }, // 24 - PusherUp
+    { EntityClass::Mobile, 0x00, 0x0008,  'D' }, // 25 - PusherDown
+    { EntityClass::Mobile, 0x00, 0x0009,  'L' }, // 26 - PusherLeft
+    { EntityClass::Mobile, 0x00, 0x000A,  'R' }, // 27 - PusherRight
+    { EntityClass::Mobile, 0x00, 0x000B,  '^' }, // 28 - CurvedArrowUp
+    { EntityClass::Mobile, 0x00, 0x000C,  'v' }, // 29 - CurvedArrowDown
+    { EntityClass::Mobile, 0x00, 0x000D,  '<' }, // 30 - CurvedArrowLeft
+    { EntityClass::Mobile, 0x00, 0x000E,  '>' }, // 31 - CurvedArrowRight
+
+    // Ennemis
+    { EntityClass::Mobile, 0x00, 0x000F,  'T' }, // 32 - EnemyPropeller (hélice carrée)
+    { EntityClass::Mobile, 0x00, 0x0010,  'E' }, // 33 - EnemyJaw (machoires)
+    { EntityClass::Mobile, 0x00, 0x0011,  'C' }, // 34 - EnemyPurplePoop (caca violet)
+    { EntityClass::Mobile, 0x00, 0x0012,  '~' }, // 35 - EnemySnake (serpent)
+    { EntityClass::Mobile, 0x00, 0x0013,  '[' }, // 36 - EnemyPropeller2 (hélice ronde)
+
+    // Déflecteurs / blocs arrondis
+    { EntityClass::Mobile, 0x00, 0x0014,  'a' }, // 37 - DeflectorRight
+    { EntityClass::Mobile, 0x00, 0x0015,  'c' }, // 38 - DeflectorLeft
+    { EntityClass::Mobile, 0x00, 0x0016,  'B' }, // 39 - RoundedPushableBrick
+
+    // 40–43 : A (non encore identifiés précisément)
+    { EntityClass::Mobile, 0x00, 0x0017,  'A' }, // 40 - UnknownEntityA_1
+    { EntityClass::Mobile, 0x00, 0x0018,  'A' }, // 41 - UnknownEntityA_2
+    { EntityClass::Mobile, 0x00, 0x0019,  'A' }, // 42 - UnknownEntityA_3
+    { EntityClass::Mobile, 0x00, 0x001A,  'A' }, // 43 - UnknownEntityA_4
+
+    // Distributeurs (F)
+    { EntityClass::Mobile, 0x00, 0x001B,  'F' }, // 44 - ArrowDispenser1
+    { EntityClass::Mobile, 0x00, 0x001C,  'F' }, // 45 - ArrowDispenser2
+    { EntityClass::Mobile, 0x00, 0x001D,  'F' }, // 46 - ArrowDispenser3
+    { EntityClass::Mobile, 0x00, 0x001E,  'F' }, // 47 - ArrowDispenser4
+
+    // Lave
+    { EntityClass::Mobile, 0x00, 0x001F,  'H' }, // 48 - Lava
+    { EntityClass::Mobile, 0x00, 0x0020,  'H' }, // 49 - Lava2
+
+    // Spéciaux / compteurs etc. (param 0x003B … 0x0032)
+    { EntityClass::Mobile, 0x00, 0x003B,  'w' }, // 50 - Countdown?
+    { EntityClass::Mobile, 0x00, 0x003A,  'x' }, // 51 - UnknownEntity_x
+    { EntityClass::Mobile, 0x00, 0x0039,  'y' }, // 52 - UnknownEntity_y
+    { EntityClass::Mobile, 0x00, 0x0038,  'z' }, // 53 - UnknownEntity_z
+    { EntityClass::Mobile, 0x00, 0x0037,  '{' }, // 54 - UnknownEntity_LeftBrace
+    { EntityClass::Mobile, 0x00, 0x0036,  '|' }, // 55 - UnknownEntity_Pipe
+}};
+
+const char* getFormatStringFromType(uint8_t type);
+
+const char* getEntitySymbol(uint8_t type);
+const char* getEntityName(uint8_t type);
+char        getEntityTypeChar(uint8_t type);
+const char* getEntityParams(uint8_t type);
+
+const char* getTableSymbol(uint8_t type);
+const char* getTableName(uint8_t type);
+char        getTableTypeChar(uint8_t type);
+const char* getTableParams(uint8_t type);
+
+int getAuxTopRightMapValue(int row, int col);    // [base+1258h]
+int getAuxBottomRightMapValue(int row, int col); // [base+12A8h]
+
+constexpr int CELL_EMPTY    = -1; // 0xFFFF
+constexpr int CELL_SENTINEL = -2; // 0xFFFE
 
 #endif // GAME_H

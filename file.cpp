@@ -1360,7 +1360,7 @@ void generateFileFromMappedData() {
     resetAndSeekFile(file, 0);
 
     // Écriture de l'en-tête
-    if (!writeLineToFile(reinterpret_cast<const char*>(fileHeader), fileS)) {
+    if (!writeLineToFile(reinterpret_cast<const char*>(fileHeader), file)) {
         showMessage("Error", "Cannot write header");
         resetLevelStateMemory();
         fileAccessEnabled = false;
