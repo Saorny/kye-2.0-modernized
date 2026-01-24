@@ -17,7 +17,43 @@
 #include <array>
 #include <vector>
 #include <cstring>
+#include <SDL3/SDL.h>
 #include "file.h"
+
+
+using i16 = std::int16_t;
+using u16 = std::uint16_t;
+using u32 = std::uint32_t;
+
+
+enum class GameInteractionMode : int16_t {
+    NormalPlay   = 0, // ax==0 -> loc_177
+    PendingBlock = 1, // ax==1 -> loc_19C
+};
+
+struct LegacyGfxBackend {
+  using WindowHandle = void*;
+  using DcHandle = void*;
+  using BitmapHandle = void*;
+
+  static DcHandle createCompatibleDC(WindowHandle wnd);
+  static BitmapHandle createCompatibleBitmap(WindowHandle wnd, i16 w, i16 h);
+  static void selectObject(DcHandle dc, void* gdiObject);
+  static void bitBlt(
+    DcHandle dcDst, i16 xDst, i16 yDst, i16 w, i16 h,
+    DcHandle dcSrc, i16 xSrc, i16 ySrc, u32 rop
+  );
+  static void setPixel(DcHandle dc, i16 x, i16 y, u32 colorRef);
+  static void deleteDC(DcHandle dc);
+  static void deleteObject(void* gdiObject);
+
+  // ⭐ Nouveau helper pour blitter vers la fenêtre principale
+  static void blitToWindow(WindowHandle wnd,
+                           i16 xDst, i16 yDst, i16 w, i16 h,
+                           DcHandle dcSrc, i16 xSrc, i16 ySrc, u32 rop);
+};
+
+extern GameInteractionMode g_interactionMode;
 
 struct Entity {
     uint16_t position;  // +0 : probablement une coordonnée ou un index
@@ -30,6 +66,28 @@ struct TileMapping {
     uint16_t param;
     uint8_t  symbol;
 };
+
+struct HudTextures {
+    SDL_Texture* wall = nullptr;
+    SDL_Texture* block = nullptr;
+    SDL_Texture* kye = nullptr;
+};
+
+extern const uint16_t g_table10C8[]; // word ptr [?? + 0x10C8]
+extern const uint16_t g_table10C6[]; // word ptr [?? + 0x10C6]
+
+namespace Globals {
+  inline const char* cmdLine = nullptr;
+  inline int showMode = 0;
+
+  inline uint32_t bootTickCount = 0;
+  inline uint16_t osVersion = 0;
+
+  inline int timerResolutionTicks = 0;
+  inline bool gameSetMode = false;
+
+  inline uint8_t legacyStateBlob[0x2EEC - 0x127C]{};
+}
 
 struct LevelChange {
     uint16_t tileId;
@@ -63,36 +121,47 @@ struct Buffer {
     char* writePtr;
 };
 
-constexpr int ROWS = 20;
-constexpr int COLS = 30;
-constexpr int MAX_CHANGES = ROWS * COLS;
+static constexpr int GRID_ROWS = 20;
+static constexpr int GRID_COLS = 30;
+constexpr int MAX_CHANGES = GRID_ROWS * GRID_COLS;
 
-inline LevelChange changeList[MAX_CHANGES];     // 600 entrées max
-inline uint16_t gameGrid[ROWS][COLS]; // Base: 0x127E
+extern i16 baseX;
+extern i16 baseY;
 
-static UINT_PTR g_timerId = 0;
-static bool g_timerActive = false;
-char g_levelFilePath[MAX_PATH];
-char displayTextBuffer[512];
-char g_levelName[512];
+inline std::vector<std::string> g_nameTable;
+extern int g_currentNameIndex;
+extern std::string g_currentName;
+
+LRESULT CALLBACK ToolboxWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+
+inline UINT_PTR g_timerId = 0;
+inline bool g_timerActive = false;
+inline char g_levelFilePath[MAX_PATH]{};
+inline char g_levelHint[512]{}; // 29FAh
+
+extern char g_levelName[];        // 0x2A9A
+extern char g_secondaryText[];    // 0x2A4A (à confirmer)
+extern char g_hintText[];         // 0x29FA
+extern char g_selectedFilePath[]; // 0x1A0
+extern uint8_t fileAccessEnabled;
 char g_levelHint[512];
-int allowedAttributes = 0x0FFFF;
-int globalCompatFlags = 0x4000;
+inline int allowedAttributes = 0x0FFFF;
+inline int globalCompatFlags = 0x4000;
+inline int g_oneWayAnimPhase = 0;
 constexpr int kMaxEntityLines = 256;
 extern uint8_t EntityTable[kMaxEntityLines];
-
-int currentLevelIndex = 1;
-int totalLevelCount = 1;
-int matchingEntryCount = 0;
-int hasPendingDialogBox = 0;
-bool hasEntryList = false;
-int remainingLives = 3;
-int levelLoadState = 1;
-int levelTransitionFlag = 0;
-int selectedObjectIndex = -1;
-
+extern int16_t g_cellClickFlags[GRID_ROWS * GRID_COLS];
 char *loadedLevelName[256];
 char *loadedLevelHint[256];
+char *filepath;
+
+extern bool  g_openFileDialogAccepted;
+extern char  g_openFileDialogPath[0x100]; // 58Ch
+extern char  g_defaultOpenSuffix[0x40]; //50Ch
+
+constexpr i16 CELL_FLAG_EMPTY    = static_cast<i16>(0xFFFF); // -1
+constexpr i16 CELL_FLAG_SENTINEL = static_cast<i16>(0xFFFE); // -2
 
 uint16_t exitCoordLeft = 0xFFF9;
 uint16_t exitCoordRight = 0xFFF9;
@@ -106,7 +175,11 @@ uint16_t selectionState    = 0;
 uint16_t selectedEntityIndex = 0;
 extern TileMapping tileMap[];
 
-uint16_t currentLevelStateVersion = 0;
+extern char g_statusLineBuffer[];         // byte_2C30
+extern int  g_statusLineCapacity;
+
+extern int16_t currentEntryIndex;
+
 int levelChangeTable[256];
 int playerRow = 0;
 int playerCol = 0;
@@ -115,10 +188,10 @@ uint16_t randomSeedLow = 0x4E35;   // Valeur d'initialisation utilisée dans le 
 uint16_t randomSeedHigh = 0x015A;  // Pareil
 int previousCol = 0;
 int previousRow = 0;
-int mouseCaptureFlag = 0;
+int g_isMouseCaptured = 0;
 int someGlobalCondition = 0;
-extern char** environmentList; 
-int eventCounter = 0;
+extern char** g_environmentStringPtrs; 
+int g_pendingEventCount = 0;
 int frameCounter = 0;
 
 const char* MSG_CANNOT_OPEN_FILE = "Cannot open file: ";
@@ -129,6 +202,7 @@ struct EntityActionStruct {
     int col;
     int timer;
 };
+
 
 class GameState {
 public:
@@ -171,11 +245,18 @@ public:
 
 GameState g_gameState;
 
+extern LegacyGfxBackend::WindowHandle g_hdc2;
+extern void* bitmap_kye;
+
+extern i16 srcRow;
+extern i16 srcCol;
+extern i16 cellWidth;
+extern i16 cellHeight;
+
 inline int g_newRow = -1;
 inline int g_newCol = -1;
 
 void resetLevelStateMemory();
-uint32_t computeAdjustedTime(Entity* entity, const EntityActionStruct* params);
 void startPollingTimer();
 
 using WriteCallback = void(*)(char*& writePtr, const char* src, int length);
@@ -187,7 +268,12 @@ enum class EntityClass : uint8_t {
     Player = 3
 };
 
-// 02C0
+struct LevelEntry {
+    i16 mode;      // [6B8h] : 1, 2 ou 3 (type d’action dans executeCurrentEntryAction)
+    i16 tileId;    // [6BAh] : valeur à écrire dans gameGrid (0xFFF5..0xFFFD, 0xFFFE, etc.)
+    i16 isActive;  // [6BCh] : 0 = inactif, !=0 = actif
+   };
+
 struct EntityMappingEntry {
     EntityClass category;  // octet 0 : 0,1,2,3
     uint8_t     unk;       // octet 1 : toujours 0 ici
@@ -195,6 +281,12 @@ struct EntityMappingEntry {
     char        asciiChar; // octet 4 : ' ', 'K', '1', ...
 };
 
+struct SpawnerSoA {
+    uint16_t* spawnerPhaseBase;        // base = 0x172E
+    uint16_t* spawnerBaseRowBase;      // base = 0x1730
+    uint16_t* spawnerBaseColBase;      // base = 0x1732
+    uint16_t* spawnDelayCounterBase;   // base = 0x1734
+};
 
 constexpr std::array<EntityMappingEntry, 56> ENTITY_MAPPINGS = {{
     // idx  class         unk   param     char   // commentaire
@@ -291,5 +383,70 @@ int getAuxBottomRightMapValue(int row, int col); // [base+12A8h]
 
 constexpr int CELL_EMPTY    = -1; // 0xFFFF
 constexpr int CELL_SENTINEL = -2; // 0xFFFE
+
+struct Delta { int dRow; int dCol; };
+extern const int8_t g_thresholdTable[];
+
+int initOrHandleEvent(int arg);
+void processCallbackQueue(uint16_t* start, uint16_t* end);
+void runLegacyCallbackQueue(CallbackQueueEntry* begin, CallbackQueueEntry* end);
+static void drainPendingEvents();
+
+using EventHandler = void(*)();
+
+struct CallbackQueueEntry {
+    uint8_t state;
+    uint8_t priority;
+    CallbackFn fn;
+};
+
+using CallbackFn = void (*)();
+
+extern CallbackFn g_callbackTable[];
+
+EventHandler g_eventHandlers[255] = {};
+
+using VoidCallback = void (*)();
+
+static void noopCallback() {}
+
+VoidCallback g_validateInternalBufferCallback = &noopCallback;
+
+using VoidCallback = void(*)();
+VoidCallback g_configureFileMode = nullptr;
+
+VoidCallback g_invokeExternalCallbackFn = &noopCallback;
+
+static constexpr int16_t kTileSelectionSentinel = static_cast<int16_t>(0xFFF3);
+static constexpr int16_t kTileSelectedSentinel  = static_cast<int16_t>(0xFFFE);
+static constexpr int16_t kTileInactiveSentinel  = static_cast<int16_t>(0xFFF9);
+
+static constexpr int16_t kIndexMin = static_cast<int16_t>(0xFFF5);
+static constexpr int16_t kIndexMax = static_cast<int16_t>(0xFFFD);
+
+extern int16_t selectionState;
+extern int16_t selectedTileValue;
+extern int16_t srcRow;
+extern int16_t srcCol;
+extern int16_t spawnRow;
+extern int16_t spawnCol;
+
+extern int16_t g_gridMain[GRID_ROWS][GRID_COLS];
+extern int16_t g_gridAuxA[GRID_ROWS][GRID_COLS];
+extern int16_t g_gridAuxB[GRID_ROWS][GRID_COLS];
+
+
+inline LevelChange changeList[MAX_CHANGES];     // 600 entrées max
+inline uint16_t gameGrid[GRID_ROWS][GRID_COLS]; // Base: 0x127E
+
+void configureFileMode();
+void invokeExternalCallback();
+void advanceToNextLevelOrBlock();
+bool canPlaceEntityAtPosition(uint16_t pos, uint16_t level, uint16_t value, uint8_t tie);
+void processCallbackQueueFromEngineEvent();
+
+extern int16_t g_entityIndexGrid[GRID_ROWS][GRID_COLS];
+
+extern const uint8_t entityTable_10BC[];
 
 #endif // GAME_H

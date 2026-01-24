@@ -19,9 +19,116 @@
 #include "graph.h"
 #include "dialog.h"
 #include "game.h"
+#include "legacy.h"
+
+using i16 = std::int16_t;
 
 constexpr uint8_t STATUS_FREE = 0x00;
 constexpr uint8_t STATUS_USED = 0xFF;
+
+int levelIndex = 1;
+int levelCount = 1;
+int matchedEntryCount = 0;
+int g_hasPendingModal = 0;
+bool hasLevelList = false;
+int remainingLives = 3;
+int g_levelJustLoadedFlag = 1;
+int hasLevelTransition = 0;
+int selectedObjectIndex = -1;
+bool g_timerActive = false;
+bool g_optionToggleFlag = false;
+int g_oneWayAnimPhase = 1;
+uint16_t g_activeSpawnerCount = 0;
+std::string g_helpContextFile = "kyehelp.hlp";
+uint16_t exitCoordLeft = 0xFFF9;
+uint16_t exitCoordRight = 0xFFF9;
+uint16_t exitState = 0xFFFB;
+HCURSOR g_mainCursor = nullptr;
+extern SpawnerSoA g_spawners;
+extern u16 g_notificationHandlerSlotWord[]; // 0,1, or legacy function pointer value
+extern u8  g_notificationHandlerParam[];    // per-slot byte parameter
+
+HBRUSH brush_black = nullptr;
+HBRUSH brush_white = nullptr;
+HBRUSH brush_blue  = nullptr;
+HBRUSH brush_green = nullptr;
+HBRUSH brush_red   = nullptr;
+
+HPEN pen_black = nullptr;
+HPEN pen_gray  = nullptr;
+HPEN pen_blue  = nullptr;
+
+HBITMAP bitmap_kye   = nullptr;
+HBITMAP bitmap_block = nullptr;
+HBITMAP bitmap_wall  = nullptr;
+
+using NotificationHandlerFn = void (*)(u16 eventCode, u16 handlerParam);
+extern uintptr_t g_handlerOrStateTable[];   // base == 0x1122 (en words dans le binaire)
+extern uint8_t  g_handlerParamTable[];     // base == 0x1134 (byte par index)
+
+i16 baseX = 0;
+i16 baseY = 0;
+
+GameState g_gameState{};
+
+uint16_t randomSeedLow  = 0x4E35;
+uint16_t randomSeedHigh = 0x015A;
+
+int previousCol       = 0;
+int previousRow       = 0;
+int g_isMouseCaptured  = 0;
+int someGlobalCondition = 0;
+
+static bool g_isRendering = false;
+
+inline char g_levelFilePath[MAX_PATH]{};
+char displayTextBuffer[512]    = {};
+char g_levelName[512]          = {};
+char g_levelHint[512]          = {};
+
+extern std::string g_levelRawText;
+extern std::string g_levelHintText;
+extern std::string g_levelDisplayText;
+
+HWND g_mainHwnd = nullptr;
+HDC  g_windowDC = nullptr;
+
+constexpr int kMaxLevelEntries = 32;
+
+LevelEntry g_levelEntries[kMaxLevelEntries] = {};
+int16_t currentEntryIndex = 0;
+
+i16 specialCellStateFlag = 0;
+
+HINSTANCE g_hInstance = nullptr;
+HWND g_hdc   = nullptr;
+HWND g_hdc2  = nullptr;
+std::string g_nameInputBuffer;
+
+std::string g_statusLineText;
+std::string g_hintText;
+
+static bool g_running = true;
+static bool g_keyDownFlag = false;
+extern HudCellEntry g_hudCells[];
+
+extern const char* g_str_1169;
+extern const char* g_str_1171;
+extern const char* g_str_117A;
+extern const char* g_str_1189;
+extern const char* g_str_1192;
+extern const char* g_str_119C;
+extern const char* g_str_11A4;
+extern const char* g_str_11AF;
+extern const char* g_str_11BE;
+extern const char* g_str_11CE;
+
+extern std::string g_levelRawText;
+extern std::string g_levelHintText;
+extern std::string g_levelDisplayText;
+
+static constexpr int16_t kTargetRequiredState = 0x001F;
+static constexpr int16_t kTargetClearedState  = 0x0020;
 
 void runScheduledCallbacks(std::vector<CallbackEntry>& table) {
     while (true) {
@@ -67,57 +174,19 @@ void startPollingTimer() {
     }
 }
 
-void loadNextLevelOrBlock() {
-    g_timerActive = false;
-    initializeWindowHandleIfNeeded();
-
-    if (hasPendingDialogBox) {
-        handleDialogClose();
+void advanceToNextLevelOrBlock()
+{
+    if (g_hasDeviceContext == 0) {
+        return;
     }
 
-    if (hasEntryList) {
-        if (currentLevelIndex >= totalLevelCount) {
-            showFinalDialog();
-            currentLevelIndex = 1;
-        } else {
-            showLevelDoneDialog();
-            ++currentLevelIndex;
-        }
-
-        loadLevelByIndex(currentLevelIndex);
-        showNewLevelDialog();
-        matchingEntryCount = 0;
-
-        updateDisplayString("LEVEL_STRING"); // Remplacer 0x29FA par une vraie chaîne
-        invalidateWindow();
-    }
-    else {
-        sub_3684();
-
-        if (remainingLives < 0) {
-            runEffect(2);  // effet sonore ou visuel : "échec"
-            drawRectangleFromGrid(row, col);
-            showGameOverDialog();
-
-            matchingEntryCount = 0;
-            loadLevelByIndex(currentLevelIndex);
-            updateDisplayString("LEVEL_STRING");
-            invalidateWindow();
-        }
-
-        if (levelTransitionFlag) {
-            handleDialogClose();
-        }
-    }
-
-    releaseDialogResources();
-    g_timerActive = true;
+    g_hasDeviceContext = 0;
 }
 
 void updateLevelEntitiesEvery30Frames() {
     if (frameCounter % 30 != 0) return;
 
-    for (int i = 0; i < currentLevelStateVersion; ++i) {
+    for (int i = 0; i < g_activeSpawnerCount; ++i) {
         auto& entry = g_gameState.entities[i];
 
         if (entry.actionCode < 0x32 || entry.actionCode > 0x3B) {
@@ -301,7 +370,7 @@ bool checkAndHandleDeathCondition(int changeIndex) {
 }
 
 void updateLivesDisplay() {
-    levelTransitionFlag = 1;
+    hasLevelTransition = 1;
 
     previousRow = spawnCol;
     previousCol = spawnRow;
@@ -346,74 +415,73 @@ void updateLivesDisplay() {
         ++iteration;
     }
 
-    // Fallback : aucune case vide trouvée
     previousRow = row;
     previousCol = col;
 }
 
-void loadLevelByIndex(int levelIndex) {
-    if (!fileAccessEnabled)
-        return;
+int loadLevelByIndex(int level)
+{
+    if (!fileAccessEnabled) {
+        return 0;
+    }
 
-    FileLike* file = openAndPrepareFileFromSlot("level.dat", "rt");
+    FileLike* file = openAndPrepareFileFromSlot(filepath, "r");
     if (!file) {
-        showMessage("level.dat", "Unable to open level file.");
+        showMessage(filepath, "Cannot open file: ");
         resetLevelStateMemory();
         fileAccessEnabled = false;
         return;
     }
 
     resetAndSeekFile(file, 0);
-    
-    char lineBuffer[80] = {};
-    readLineToBuffer(file, lineBuffer, 0x4F);
-    totalLevelCount = parseSignedDecimalString(lineBuffer);
-    
-    hasEntryList = false;
-    hasPendingDialogBox = false;
-    levelLoadState = 1;
-    levelTransitionFlag = 0;
-    remainingLives = 3;
-    selectedObjectIndex = -1;
 
-    // Clamp le niveau demandé
-    if (levelIndex < 1 || levelIndex > totalLevelCount)
-        levelIndex = 1;
+    std::array<char, 0x4F + 1> outBuf{};
+    readLineToBuffer(file, outBuf.data(), 0x4F);
+    levelCount = parseSignedDecimalString(outBuf.data());
 
-    // On lit autant de blocs que nécessaire
-    for (int i = 0; i < levelIndex; ++i) {
-        char structuredBlock[0x350] = {};
-        readStructuredBlock(file, structuredBlock);  // lit le bloc de 3 lignes + 20 éléments
-        if (i + 1 == levelIndex) {
-            // Traitement du bloc voulu
+    hasLevelList            = false;
+    g_hasPendingModal       = false;
+    g_levelJustLoadedFlag   = true;
+    hasLevelTransition      = false;
+    remainingLives          = 3;
+    selectedObjectIndex     = 0xFFFF;
 
-            std::memcpy(&g_levelName[0], &structuredBlock[0x000], 83);   // → 2A9A
-            std::memcpy(&g_levelHint[0], &structuredBlock[0x0CD], 83);   // → 2A4A
-            std::memcpy(&displayTextBuffer[0], &structuredBlock[0x154], 83); // → 29FA
-
-            // Traite les 20 objets du niveau
-            for (int j = 0; j < 20; ++j) {
-                const char* lineData = &structuredBlock[0x1A3 + col * 0x23];
-                
-                loadLevelRow(col, lineData);  // ← correspond à sub_1DF3
-            }
-
-            postLoadLevel(); // ← sub_1A37 (probablement nettoyage ou affichage)
-        }
+    if (level < 1) {
+        level = 1;
+    } else if (level > levelCount) {
+        level = levelCount;
     }
 
+    std::array<char, 0x38C> levelBlock{};
+    for (int i = 0; i < level; ++i) {
+        if (readStructuredBlock(file, levelBlock.data()) < 0) {
+            cleanFile(file);
+            return 0;
+        }
+    }
     cleanFile(file);
+    g_activeSpawnerCount = 0;
+
+    g_levelRawText.assign(reinterpret_cast<char*>(g_levelHintText.data()));
+    g_levelHintText    = std::string(reinterpret_cast<char*>(g_levelHintText.data() + 0x150));
+    g_levelDisplayText = std::string(reinterpret_cast<char*>(g_levelHintText.data() + 0x2A0));
+
+    std::array<char, 0x23 * 0x14> lineData{};
+    for (int col = 0; col < 0x14; ++col) {
+        loadLevelRow(col, lineData.data() + col * 0x23);
+    }
+
+    postLoadLevel();
+    return 1;
 }
 
 void resetLevelStateMemory() {
-    currentLevelStateVersion = 0;
+    g_activeSpawnerCount = 0;
 
-    // Copie des valeurs par défaut (noms, indices, labels ?)
     std::memcpy(loadedLevelName, reinterpret_cast<const void*>(0x045A), 3 * sizeof(uint16_t));
     std::memcpy(loadedLevelHint, reinterpret_cast<const void*>(0x0460), 4 * sizeof(uint16_t));
     std::memcpy(displayTextBuffer, reinterpret_cast<const void*>(0x0468), 7 * sizeof(uint16_t));
 
-    // Reset de la grille de jeu principale : g_state.bottomEntityMap[20][30]
     for (int row = 0; row < 20; ++row) {
         for (int col = 0; col < 30; ++col) {
             g_state.bottomEntityMap[row][col] = 0xFFF9;
@@ -457,20 +525,20 @@ bool decodeTile(char inputChar, uint16_t& outCode, uint16_t& outParam) {
 }
 
 bool registerLevelChange(uint16_t tileId, uint16_t row, uint16_t col) {
-    if (currentLevelStateVersion >= 0x258)
+    if (g_activeSpawnerCount >= 0x258)
         return false;
 
     // 2D grid version marker
-    g_state.rightEntityMap[row][col] = currentLevelStateVersion;
+    g_state.rightEntityMap[row][col] = g_activeSpawnerCount;
 
     // Register into linear changeList
-    LevelChange& entry = changeList[currentLevelStateVersion];
+    LevelChange& entry = changeList[g_activeSpawnerCount];
     entry.tileId = tileId;
     entry.row = row;
     entry.col = col;
     entry.extra = 0;
 
-    ++currentLevelStateVersion;
+    ++g_activeSpawnerCount;
     return true;
 }
 
@@ -544,115 +612,98 @@ void loadLevelRow(int columnIndex, const char* lineData) {
     }
 }
 
-void postLoadLevel() {
-    bool hasSelection = false;
-    for (int y = 0; y < ROWS && !hasSelection; ++y) {
-        for (int x = 0; x < COLS; ++x) {
-            if (g_state.rightEntityMap[y][x] == 0xFFF3) {
-                hasSelection = true;
+static inline void invalidateIfIndex(int16_t& cell) {
+    const int16_t v = cell;
+    if (v < kIndexMin || v > kIndexMax) {
+        if (v >= 0) {
+            markEntryInactive(v);
+        }
+        cell = kTileInactiveSentinel;
+    }
+}
+
+int postLoadLevel() {
+    int countSel = 0;
+    for (int r = 0; r < kGridRows && countSel == 0; ++r) {
+        for (int c = 0; c < kGridCols; ++c) {
+            if (g_gridMain[r][c] == kTileSelectionSentinel) {
+                ++countSel;
+                break;
+            }
+        }
+    }
+    if (countSel == 0) {
+        selectionState = kTileSelectionSentinel;
+    }
+
+    int foundSelected = 0;
+    int foundRow = 0;
+    int foundCol = 0;
+    for (int r = 0; r < kGridRows && foundSelected == 0; ++r) {
+        for (int c = 0; c < kGridCols; ++c) {
+            if (g_gridMain[r][c] == kTileSelectedSentinel) {
+                foundSelected = 1;
+                foundRow = r;
+                foundCol = c;
                 break;
             }
         }
     }
 
-    if (!hasSelection) {
-        selectionState = 0xFFF3;
+    if (foundSelected == 0 || foundRow != srcRow || foundCol != srcCol) {
+        srcRow = 3;
+        srcCol = 3;
+        spawnRow = 3;
+        spawnCol = 3;
+        selectedTileValue = kTileSelectedSentinel;
     }
 
-    bool hasPlayer = false;
-    int foundRow = -1, foundCol = -1;
-    for (int y = 0; y < ROWS && !hasPlayer; ++y) {
-        for (int x = 0; x < COLS; ++x) {
-            if (g_state.rightEntityMap[y][x] == 0xFFFE) {
-                hasPlayer = true;
-                foundRow = y;
-                foundCol = x;
-                break;
-            }
+    for (int c = 0; c < kGridCols; ++c) {
+        for (int r = 0; r < kGridRows; ++r) {
+            invalidateIfIndex(g_gridMain[r][c]);
         }
     }
-
-    if (!hasPlayer || foundRow != row || foundCol != col) {
-        row = col = spawnRow = spawnCol = 3;
-        selectedTileValue = 0xFFFE;
-    }
-
-    for (int y = 0; y < ROWS; ++y) {
-        for (int x = 0; x < COLS; ++x) {
-            int& val = g_state.rightEntityMap[y][x];
-            if ((val >= 0xFFF5 && val <= 0xFFFD) || val == 0 || static_cast<int16_t>(val) < 0) {
-                if (val > 0) markEntryInactive(val);
-                val = 0xFFF9;
-            }
+    for (int r = 0; r < kGridRows; ++r) {
+        for (int c = 0; c < kGridCols; ++c) {
+            invalidateIfIndex(g_gridAuxA[r][c]);
         }
     }
-
-    // Nettoyage 2 : levelChangeTable (base = 0x12A4)
-    for (int y = 0; y < 19; ++y) {
-        for (int x = 0; x < 18; ++x) {
-            int& val = levelChangeTable[y * 0x28 + x];
-            if ((val >= 0xFFF5 && val <= 0xFFFD) || val == 0 || val < 0) {
-                if (val > 0) markEntryInactive(val);
-                val = 0xFFF9;
-            }
-        }
-    }
-
-    // Nettoyage 3 : gameGrid (0x127E à 0x12A6)
-    for (int y = 0; y < ROWS; ++y) {
-        for (int x = 0; x < COLS; ++x) {
-            uint16_t& val = gameGrid[y][x];
-            if ((val >= 0xFFF5 && val <= 0xFFFD) || val == 0 || static_cast<int16_t>(val) < 0) {
-                if (val > 0) markEntryInactive(val);
-                val = 0xFFF9;
-            }
-        }
-    }
-
-    // Nettoyage 4 : g_state.bottomEntityMap (0x1706 à 0x172E)
-    for (int y = 0; y < 19; ++y) {
-        for (int x = 0; x < 15; ++x) {
-            int& val = g_state.bottomEntityMap[y][x];
-            if ((val >= 0xFFF5 && val <= 0xFFFD) || val == 0 || static_cast<int16_t>(val) < 0) {
-                if (val > 0) markEntryInactive(val);
-                val = 0xFFF9;
-            }
+    for (int r = 0; r < kGridRows; ++r) {
+        for (int c = 0; c < kGridCols; ++c) {
+            invalidateIfIndex(g_gridAuxB[r][c]);
         }
     }
 
     finalizeLevelVisuals();
+    return 1;
 }
 
-bool replaceEntityIfTargetMatches(uint16_t index, uint16_t newRow, uint16_t newCol) {
-    const int rowOffset = newRow * COLS;
-    const int offset = rowOffset + newCol;
+int replaceEntityIfTargetMatches(int index, int newRow, int newCol) {
+    const int16_t cell = g_entityIndexGrid[newRow][newCol];
+    if (cell < 0) {
+        return 0;
+    }
 
-    int16_t currentEntity = gameGrid[newRow][newCol];
-    if (currentEntity < 0)
-        return false;
+    const int16_t targetEntityIndex = cell;
+    if (g_entitySlots[targetEntityIndex].state != kTargetRequiredState) {
+        return 0;
+    }
 
-    // Vérifie si l'entité cible est de type 0x1F
-    if (g_gameState.entityTypeTable[currentEntity] != 0x1F)
-        return false;
+    const int16_t oldRow = g_entitySlots[static_cast<int16_t>(index)].row;
+    const int16_t oldCol = g_entitySlots[static_cast<int16_t>(index)].col;
 
-    // Sauvegarde de la position originale de l'entité source
-    uint16_t oldRow = g_gameState.entityRowTable[index];
-    uint16_t oldCol = g_gameState.entityColTable[index];
+    g_entitySlots[targetEntityIndex].state = kTargetClearedState;
+    g_entitySlots[targetEntityIndex].extra = 0;
 
-    // Marque l'ancienne entité comme inactive
-    g_gameState.entityTypeTable[currentEntity] = 0x20;
-    g_gameState.entityTimerTable[currentEntity] = 0;
+    moveAndRedrawEntity(static_cast<int16_t>(targetEntityIndex),
+                        static_cast<int16_t>(newRow),
+                        static_cast<int16_t>(newCol));
 
-    // Remplace par la nouvelle entité et redessine
-    moveAndRedrawEntity(currentEntity, newRow, newCol);
     drawRectangleFromGrid(oldRow, oldCol);
 
-    // Marque l'ancienne entité comme inactive
-    markEntryInactive(index);
-
-    return true;
+    markEntryInactive(static_cast<int16_t>(index));
+    return 1;
 }
-
 
 void markEntryInactive(int index) {
     if (index >= 0 && index < MAX_CHANGES) {
@@ -662,13 +713,13 @@ void markEntryInactive(int index) {
 
 void finalizeLevelVisuals() {
     int i = 0;
-    while (i < currentLevelStateVersion) {
+    while (i < g_activeSpawnerCount) {
         if (changeList[i].tileId == 0x00FF) {
-            if (currentLevelStateVersion < 1) break;
-            --currentLevelStateVersion;
+            if (g_activeSpawnerCount < 1) break;
+            --g_activeSpawnerCount;
 
             // Décale tous les éléments suivants
-            for (int j = i; j < currentLevelStateVersion; ++j) {
+            for (int j = i; j < g_activeSpawnerCount; ++j) {
                 changeList[j] = changeList[j + 1];
             }
 
@@ -687,7 +738,7 @@ void finalizeLevelVisuals() {
 }
 
 void handleDialogClose() {
-    if (levelTransitionFlag != 0) {
+    if (hasLevelTransition != 0) {
         runEffect(2); // Effet visuel/sonore pour fermeture de dialogue
         drawRectangleFromGrid(row, col);
 
@@ -698,7 +749,7 @@ void handleDialogClose() {
         g_state.bottomEntityMap[row][col] = 0xFFFE;
 
         runEffect(1); // Peut-être un effet de confirmation
-        levelTransitionFlag = 0;
+        hasLevelTransition = 0;
         return;
     }
 
@@ -752,8 +803,8 @@ void handlePendingBlock(int rowIndex, int colIndex) {
 }
 
 bool hasSpecialCell() {
-    for (int y = 0; y < ROWS; ++y) {
-        for (int x = 0; x < COLS; ++x) {
+    for (int y = 0; y < GameState::GRID_ROWS; ++y) {
+        for (int x = 0; x < GameState::GRID_COLS; ++x) {
             if (gameGrid[y][x] == 0xFFFE) {
                 return true;
             }
@@ -762,196 +813,184 @@ bool hasSpecialCell() {
     return false;
 }
 
-bool canPlaceEntityAtPosition(uint16_t xPos, uint16_t& typeOut, uint16_t objectId, uint8_t mode) {
-    uint16_t type = typeOut;
+bool canPlaceEntityAtPosition(uint16_t pos, uint16_t level, uint16_t value, uint8_t tie)
+{
+    uint16_t si = 0;
 
-    if (type == 0) {
-        uint16_t si = objectId;
-        if (objectId >= 0x3B) {
-            uint16_t tmp = xPos + 0x46;
-            if ((tmp & 0x03) == 0)
-                --si;
+    if (level == 0) {
+        si = value;
+        if (value >= 0x003B) {
+            uint16_t tmp = static_cast<uint16_t>(pos + 0x0046);
+            if ((tmp & 0x0003) == 0) {
+                si = static_cast<uint16_t>(si - 1);
+            }
         }
-        type = 0;
-        while (si >= memoryTable_10C8[type]) {
-            ++type;
+        level = 0;
+        while (g_table10C8[level] <= si) {
+            level = static_cast<uint16_t>(level + 1);
         }
-        typeOut = type;
-    } else if (type >= 3) {
-        uint16_t tmp = xPos + 0x46;
-        if ((tmp & 0x03) != 0)
-            --objectId;
-        typeOut = type - 1;
-        objectId += memoryTable_10C8[type - 1];
+    } else {
+        if (level < 3) {
+            value = static_cast<uint16_t>(value - 1);
+        } else {
+            uint16_t tmp = static_cast<uint16_t>(pos + 0x0046);
+            if ((tmp & 0x0003) != 0) {
+                value = static_cast<uint16_t>(value - 1);
+            }
+        }
+        value = static_cast<uint16_t>(value + g_table10C8[level - 1]);
     }
 
-    if (typeOut >= 4 && typeOut <= 10) {
-        uint16_t cx;
-        if (xPos > 0x10 && typeOut == 4) {
-            cx = memoryTable_10C6[typeOut] + 7;
-        } else {
-            cx = memoryTable_10C8[typeOut];
-        }
-
-        uint16_t bx = (xPos + 0x7B2);
-        if ((bx & 3) != 0)
-            --cx;
-
-        bx = (xPos + 1) / 4;
-        bx += cx;
-
-        uint16_t ax = 0x16D * xPos + bx + 4;
-        uint16_t remainder = ax % 7;
-        cx -= remainder;
-
-        if (typeOut == 4) {
-            if (objectId > cx)
-                return false;
-            if (objectId == cx && mode < 2)
-                return false;
-        } else {
-            if (objectId < cx)
-                return false;
-            if (objectId == cx && mode > 1)
-                return false;
-        }
-
-        return true;
+    if (level < 4) {
+        return false;
     }
 
-    return false;
+    if (level != 4) {
+        if (level > 10) {
+            return false;
+        }
+        if (level != 10) {
+            return true;
+        }
+    }
+
+    uint16_t cx = 0;
+    if (pos > 0x0010 && level == 4) {
+        cx = static_cast<uint16_t>(g_table10C6[level] + 7);
+    } else {
+        cx = g_table10C8[level];
+    }
+    {
+        uint16_t tmp = static_cast<uint16_t>(pos + 0x07B2);
+        if ((tmp & 0x0003) != 0) {
+            cx = static_cast<uint16_t>(cx - 1);
+        }
+    }
+    uint16_t bx = static_cast<uint16_t>(((pos + 1) >> 2) + cx);
+    uint32_t ax32 = static_cast<uint32_t>(0x016D) * static_cast<uint32_t>(pos);
+    ax32 += static_cast<uint32_t>(bx);
+    ax32 += 4u;
+
+    uint16_t rem = static_cast<uint16_t>(ax32 % 7u);
+    cx = static_cast<uint16_t>(cx - rem);
+
+    if (level == 4) {
+        if (value > cx) return true;
+        if (value < cx) return false;
+        return (tie >= 2);
+    } else {
+        if (value < cx) return true;
+        if (value > cx) return false;
+        return (tie <= 1);
+    }
 }
 
-int initOrHandleEvent(int arg) {
-    return handleEvent(arg, 0, 0);
-}
-
-int handleEvent(int arg0, int arg2, int arg4) {
-    if (arg4 == 0) {
-        while (eventCounter > 0) {
-            --eventCounter;
-            uint16_t index = eventCounter;
-            auto func = reinterpret_cast<void(*)()>(*reinterpret_cast<uint16_t*>(0x2E92 + 2 * index));
-            func();
-        }
-        loc_B7();               // fonction de post-traitement
-        validateBuffer();     // vérifie ou flush un buffer
-    }
-
-    if (arg2 == 0) {
-        if (arg4 == 0) {
-            setupFileMode();     // setup mode fichier
-            reinterpret_cast<void(*)()>(externalCallback)();  // call d'une fonction externe
-        }
-        loc_CB(arg0);           // fonction d'arrêt propre ou libération
-    }
-
+int initOrHandleEvent(int exitCode)
+{
+    handleEngineEvent(exitCode, 0, 0);
     return 0;
 }
 
-void processCallbackQueue(uint16_t* start, uint16_t* end) {
-    while (true) {
-        uint8_t highestValue = 0;
-        uint16_t* candidate = end;
-
-        // Recherche du bloc avec valeur la plus haute en [bx+1]
-        for (uint16_t* entry = start; entry < end; entry += 3) {
-            if (entry[0] != 0xFF && entry[1] >= highestValue) {
-                highestValue = entry[1];
-                candidate = entry;
-            }
-        }
-
-        // Si aucun bloc valide trouvé → fin
-        if (candidate == end) return;
-
-        // Marquer l’entrée comme utilisée
-        bool wasZero = (candidate[0] == 0);
-        candidate[0] = 0xFF;
-
-        // Appel du callback pointé par [candidate + 2]
-        void (*callback)() = *(void (**)(void))((uint8_t*)candidate + 2);
-        if (wasZero) {
-            callback();
-        } else {
-            callback();
-        }
-
-        // Recommencer
+static void drainPendingEvents()
+{
+    while (g_pendingEventCount != 0)
+    {
+        --g_pendingEventCount;
+        g_eventHandlers[g_pendingEventCount]();
     }
 }
 
+void handleEngineEvent(int exitCode, int skipExit, int skipPreDrain)
+{
+    if (skipPreDrain == 0) {
+        drainPendingEvents();
+        processCallbackQueueFromEngineEvent();
+        if (g_validateInternalBufferCallback) {
+            g_validateInternalBufferCallback();
+        }
+    }
 
-uint32_t computeAdjustedTime(Entity* entity, const EntityActionStruct* params) {
-    loadSpeedSettingFromEnvVar();
-    uint64_t time = ((uint64_t)speedMultiplierHigh << 16 | speedMultiplierLow) + 0x12CEA600;
-
-    uint16_t base = entity->position + 0xF844;
-    int16_t shifted = base >> 2;
-    time += (uint64_t)shifted * 0x1F80786;
-
-    uint16_t lowBits = base & 0x3;
-    time += (uint64_t)lowBits * 0x33801E1;
-    if (lowBits != 0)
-        time += 0x00015180;
-
-    uint16_t total = 0;
-    for (int i = 0; i < entity->height - 1; ++i)
-        total += entityTable[i + 0x10BC];
-
-    total += entity->width - 1;
-    if (entity->height > 2 && (entity->position & 3) == 0)
-        ++total;
-
-    uint16_t si = total * 0x18 + params->param1;
-    if (speedFallbackUsed && canPlaceEntityAtPosition(entity->position + 0xF84E, 0, total, params->param1))
-        --si;
-
-    time += (uint64_t)si * 0xE10;
-    time += (uint64_t)(params->param0) * 0x3C + params->param3;
-
-    return (uint32_t)time;
-}
-
-void loadSpeedSettingFromEnvVar() {
-    const char* env = findEnvVarValue(0x10EC); // admettons: "KYE_SPEED"
-
-    if (!env || strlen(env) < 4) {
-        fallback:
-        speedFallbackUsed = true;
-        speedMultiplierHigh = 0;
-        speedMultiplierLow = 0x4650;
-        copyString(dst, 0x10EF); // "slow"
-        copyString(dest, 0x10F3); // "slow"
+    if (skipExit != 0) {
         return;
     }
 
-    // Validation des 4 premiers caractères (doivent avoir flag 0x0C dans une table à 0xD6F)
-    for (int i = 0; i < 3; ++i) {
-        uint8_t ch = env[i];
-        if ((lookupTable[ch] & 0x0C) == 0) goto fallback;
+    if (skipPreDrain == 0) {
+        configureFileMode();
+        invokeExternalCallback();
     }
 
-    // Le 4e doit être '+' ou '-' ou un chiffre avec flag 0x02
-    if (env[3] != '+' && env[3] != '-') {
-        if ((lookupTable[(uint8_t)env[3]] & 0x02) == 0) goto fallback;
-    }
-
-    // Copie sécurisée dans une chaîne temporaire
-    char padded[4] = {};
-    strncpy(padded, env, 3); // pas +4 ! Le 4e est géré différemment
-    padded[3] = '\0';
-
-    // Parse le reste de la chaîne
-    int32_t speed = parseSignedDecimalString(env + 3);
-
-    // Multiplie par 0xE10
-    uint64_t result = static_cast<uint64_t>(speed) * 0xE10;
-    speedMultiplierLow = static_cast<uint16_t>(result);
-    speedMultiplierHigh = static_cast<uint16_t>(result >> 16);
-    speedFallbackUsed = false;
+    cleanupAndTerminate(exitCode);
 }
 
+void cleanupAndTerminate(int exitCode)
+{
+    if (g_renderer != nullptr) {
+        SDL_DestroyRenderer(g_renderer);
+        g_renderer = nullptr;
+    }
+
+    if (g_window != nullptr) {
+        SDL_DestroyWindow(g_window);
+        g_window = nullptr;
+    }
+
+    SDL_Quit();
+    std::exit(exitCode & 0xFF);
+}
+
+static CallbackQueueEntry* selectHighestPriorityEntry(CallbackQueueEntry* begin, CallbackQueueEntry* end)
+{
+    uint8_t bestPriority = 0;
+    CallbackQueueEntry* best = end;
+
+    for (auto* e = begin; e < end; ++e) {
+        if (e->state != 0xFF && e->priority >= bestPriority) {
+            bestPriority = e->priority;
+            best = e;
+        }
+    }
+
+    return best;
+}
+
+void processCallbackQueue(CallbackQueueEntry* begin, CallbackQueueEntry* end)
+{
+    for (;;) {
+        CallbackQueueEntry* e = selectHighestPriorityEntry(begin, end);
+        if (e == end) return;
+
+        CallbackFn cb = e->fn;
+        e->state = 0xFF;
+
+        if (cb) {
+            cb();
+        }
+    }
+}
+
+void runLegacyCallbackQueue(CallbackQueueEntry* begin, CallbackQueueEntry* end)
+{
+    for (;;) {
+        uint8_t bestPriority = 0xFF;
+        CallbackQueueEntry* best = end;
+
+        for (auto* e = begin; e < end; ++e) {
+            if (e->state != 0xFF && e->priority <= bestPriority) {
+                bestPriority = e->priority;
+                best = e;
+            }
+        }
+
+        if (best == end) return;
+
+        CallbackFn cb = best->fn;
+        best->state = 0xFF;
+
+        if (cb) {
+            cb();
+        }
+    }
+}
 
 void bufferCopyCallback(char** bufferPtrRef, const char* data, int length) {
     std::memcpy(*bufferPtrRef, data, length);
@@ -1177,7 +1216,7 @@ int gameMainLoop() {
 
     updateLevelEntitiesEvery30Frames();
 
-    for (int entityIndex = 0; entityIndex < currentLevelStateVersion; ++entityIndex) {
+    for (int entityIndex = 0; entityIndex < g_activeSpawnerCount; ++entityIndex) {
         auto& entity = g_gameState.entities[entityIndex];
         int row  = entity.row;
         int col  = entity.col;
@@ -2439,4 +2478,1984 @@ APPLY_AND_MOVE:
     }
 
     moveAndRedrawEntity(entityIndex, newRow, newCol);
+}
+
+static inline i16 tileRandomCoord16()
+{
+  const u16 r = pseudoRandomUpdate();
+  return static_cast<i16>((r >> 11) & 0x000F);
+}
+
+static void renderSparkleTileAndPresent(i16 pixelCount)
+{
+  auto dcSrc = LegacyGfxBackend::createCompatibleDC(g_hdc2);
+  auto bmpTmp = LegacyGfxBackend::createCompatibleBitmap(g_hdc2, 16, 16);
+  auto dcTmp = LegacyGfxBackend::createCompatibleDC(g_hdc2);
+
+  LegacyGfxBackend::selectObject(dcTmp, bmpTmp);
+  LegacyGfxBackend::selectObject(dcSrc, bitmap_kye);
+
+  LegacyGfxBackend::bitBlt(
+    dcTmp, 0, 0, 16, 16,
+    dcSrc, 0, 0, 0x00CC0020u
+  );
+
+  for (i16 i = 0; i < pixelCount; ++i) {
+    const i16 x = tileRandomCoord16();
+    const i16 y = tileRandomCoord16();
+    LegacyGfxBackend::setPixel(dcTmp, x, y, 0x00FFFFFFu);
+  }
+
+  const i16 dstY = static_cast<i16>(srcRow * cellHeight);
+  const i16 dstX = static_cast<i16>(srcCol * cellWidth);
+
+  LegacyGfxBackend::bitBlt(
+    static_cast<LegacyGfxBackend::DcHandle>(g_hdc2),
+    dstX, dstY, 16, 16,
+    dcTmp, 0, 0, 0x00CC0020u
+  );
+
+  LegacyGfxBackend::deleteDC(dcSrc);
+  LegacyGfxBackend::deleteDC(dcTmp);
+  LegacyGfxBackend::deleteObject(bmpTmp);
+}
+
+void runTileSparkleEffectSdl(i16 effectId)
+{
+  if (effectId == 1) {
+    for (i16 sparkleCount = 0x0100; sparkleCount >= 0; sparkleCount = static_cast<i16>(sparkleCount - 0x0010)) {
+      renderSparkleTileAndPresent(sparkleCount);
+    }
+    return;
+  }
+
+  if (effectId == 2) {
+    for (i16 sparkleCount = 0; sparkleCount < 0x0100; sparkleCount = static_cast<i16>(sparkleCount + 0x0010)) {
+      renderSparkleTileAndPresent(sparkleCount);
+    }
+    return;
+  }
+
+  auto dc = LegacyGfxBackend::createCompatibleDC(g_hdc2);
+
+  const i16 dstY = static_cast<i16>(srcRow * cellHeight);
+  const i16 dstX = static_cast<i16>(srcCol * cellWidth);
+
+  LegacyGfxBackend::selectObject(dc, bitmap_kye);
+
+  LegacyGfxBackend::bitBlt(
+    static_cast<LegacyGfxBackend::DcHandle>(g_hdc2),
+    dstX, dstY, 16, 16,
+    dc, 0, 0, 0x00CC0020u
+  );
+
+  LegacyGfxBackend::deleteDC(dc);
+}
+
+const char* lookupText(uint16_t id) {
+    switch (id) {
+        case 0x29FA: return "???"; // à remplir quand tu dump les strings
+        default:     return "<unknown text>";
+    }
+}
+
+void setStatusTextFromId(uint16_t id) {
+    setStatusText(lookupText(id));
+}
+
+int16_t handleGameClick(int16_t x, int16_t y)
+{
+    const int16_t rawX = x;
+    const int16_t rawY = y;
+
+    if (!isPointInRect(x, y)) {
+        return 0;
+    }
+
+    switch (g_interactionMode) {
+        case GameInteractionMode::PendingBlock: {
+            advanceToNextLevelOrBlock();
+            const int16_t rowIndex = static_cast<int16_t>(rawX / cellHeight);
+            const int16_t colIndex = static_cast<int16_t>(rawY / cellWidth);
+
+            // handlePendingBlock(rowIndex, colIndex)
+            handlePendingBlock(rowIndex, colIndex);
+
+            previousRow = rowIndex;
+            previousCol = colIndex;
+            g_hasPendingModal = 1;
+            matchedEntryCount  = 1;
+
+            return 0;
+        }
+
+        case GameInteractionMode::NormalPlay: {
+            const int16_t rowIndex = static_cast<int16_t>(rawX / cellHeight);
+            const int16_t colIndex = static_cast<int16_t>(rawY / cellWidth);
+
+            handleClickOnGridCell(rowIndex, colIndex);
+            initializeWindowHandleIfNeeded();
+            updateGridCell(rowIndex, colIndex);
+            renderLivesAndLevelInfo();
+            releaseDialogResources();
+            return 0;
+        }
+
+        default:
+            return 0;
+    }
+}
+
+inline int countDiamondsInGrid()
+{
+    int count = 0;
+    for (int row = 0; row < GameState::GRID_ROWS ; ++row) {
+        for (int col = 0; col < GameState::GRID_COLS ; ++col) {
+            if (gameGrid[row][col] == 0xFFF3u) {
+                ++count;
+            }
+        }
+    }
+    return count;
+}
+
+int renderLivesAndLevelInfo()
+{
+    GameInteractionMode mode = g_interactionMode;
+    if (mode != GameInteractionMode::PendingBlock &&
+        mode != GameInteractionMode::NormalPlay)
+    {
+        return 0;
+    }
+
+    char textBuffer[0x6C] = {0};
+
+    if (mode == GameInteractionMode::PendingBlock) {
+        LegacyGfxBackend::selectObject(g_hdc2, pen_gray);
+
+        drawRectangle(
+            baseX,
+            baseY,
+            static_cast<i16>(baseX + 0x46),
+            static_cast<i16>(baseY + 0x11));
+
+        LegacyGfxBackend::DcHandle tempMemoryDC =
+            LegacyGfxBackend::createCompatibleDC(g_hdc2);
+        LegacyGfxBackend::selectObject(tempMemoryDC, bitmap_kye);
+
+        i16 xOffsetLives = 0;
+        for (int i = 0; i < remainingLives; ++i) {
+            i16 destX = static_cast<i16>(baseX + xOffsetLives + 1);
+            i16 destY = static_cast<i16>(baseY + 1);
+
+            LegacyGfxBackend::bitBlt(
+                g_hdc2,
+                destX,
+                destY,
+                0x10,
+                0x10,
+                tempMemoryDC,
+                0,
+                0,
+                SRCCOPY);
+
+            xOffsetLives = static_cast<i16>(xOffsetLives + 0x14);
+        }
+
+        LegacyGfxBackend::deleteDC(tempMemoryDC);
+        LegacyGfxBackend::selectObject(g_hdc2, pen_black);
+
+        prepareAndCallProcessMainLoop(textBuffer, 0x4B8, levelIndex);
+        int len = static_cast<int>(std::strlen(textBuffer));
+        drawTextAt(static_cast<i16>(baseX + 0x50), baseY, textBuffer, len);
+
+        int diamondCount = 0;
+        for (int row = 0; row < GameState::GRID_ROWS ; ++row) {
+            for (int col = 0; col < GameState::GRID_COLS ; ++col) {
+                if (gameGrid[row][col] == 0xFFF3u) {
+                    ++diamondCount;
+                }
+            }
+        }
+
+        prepareAndCallProcessMainLoop(textBuffer, 0x4C6, diamondCount);
+        len = static_cast<int>(std::strlen(textBuffer));
+        drawTextAt(static_cast<i16>(baseX + 0xA0), baseY, textBuffer, len);
+    } else {
+        int diamondCount = 0;
+        for (int row = 0; row < GameState::GRID_ROWS ; ++row) {
+            for (int col = 0; col < GameState::GRID_COLS ; ++col) {
+                if (gameGrid[row][col] == 0xFFF3u) {
+                    ++diamondCount;
+                }
+            }
+        }
+
+        prepareAndCallProcessMainLoop(textBuffer, 0x4DC, diamondCount);
+        int len = static_cast<int>(std::strlen(textBuffer));
+        drawTextAt(static_cast<i16>(baseX + 5), baseY, textBuffer, len);
+
+        prepareAndCallProcessMainLoop(textBuffer, 0x4ED, 0x2D5E);
+        len = static_cast<int>(std::strlen(textBuffer));
+        if (len > 0x19) {
+            len = 0x19;
+        }
+
+        drawTextAt(static_cast<i16>(baseX + 0x6E), baseY, textBuffer, len);
+    }
+
+    return 0;
+}
+
+void setStatusText(const std::string& text) {
+    clearStatusLine(text.c_str());
+}
+
+void handleClickOnGridCell(int16_t row, int16_t col)
+{
+    if (row < 0 || row >= GameState::GRID_ROWS || col < 0 || col >= GameState::GRID_COLS) {
+        return;
+    }
+
+    const uint16_t cellValue = gameGrid[row][col];
+
+    if (cellValue == 0xFFFFu) {  // CELL_EMPTY
+        if (!hasLevelList) {
+            return;
+        }
+
+        if (!isCurrentEntryActionActive()) {
+            return;
+        }
+        const LevelEntry& entry = g_levelEntries[currentEntryIndex];
+
+        executeCurrentEntryAction(entry.mode,
+                                  entry.tileId,
+                                  static_cast<i16>(row),
+                                  static_cast<i16>(col));
+        return;
+    }
+    handleStandardCellClick(row, col);
+}
+
+
+void handleStandardCellClick(i16 row, i16 col)
+{
+    if (row < 0 || row >= GameState::GRID_ROWS || col < 0 || col >= GameState::GRID_COLS) {
+        return;
+    }
+    const u16 cellValue      = gameGrid[row][col];
+    const i16 signedValue    = static_cast<i16>(cellValue); // pour le test > 0
+    const u16 originalValue  = cellValue;                   // on garde la valeur avant modification
+
+    if (signedValue > 0) {
+        markEntryInactive(signedValue);
+        gameGrid[row][col] = 0xFFFFu;   // cellule vidée
+    } else {
+        gameGrid[row][col] = 0xFFFFu;
+    }
+    finalizeLevelVisuals();
+    if (originalValue == 0xFFFEu) {
+        handleSpecialSentinelClick();
+    }
+}
+
+void handleSpecialSentinelClick()
+{
+    const bool hasSpecial = hasSpecialCell();
+    specialCellStateFlag = hasSpecial ? 0 : 1;
+
+    if (!g_hdc2) {
+        return;
+    }
+
+    RECT clientRect{};
+    GetClientRect(static_cast<HWND>(g_hdc2), &clientRect);
+
+    InvalidateRect(static_cast<HWND>(g_hdc2), &clientRect, FALSE);
+    UpdateWindow(static_cast<HWND>(g_hdc2));
+}
+
+inline int cellIndex(i16 row, i16 col)
+{
+    return row * GameState::GRID_COLS + col;
+}
+
+void executeCurrentEntryAction(i16 actionType,
+                               i16 tileId,
+                               i16 row,
+                               i16 col)
+{
+    const bool inBounds =
+        (col > 0 && col < (GameState::GRID_COLS - 1)) &&
+        (row > 0 && row < (GameState::GRID_ROWS - 1));
+
+    const bool invalidPos = !inBounds;
+
+    switch (actionType) {
+    case 1:
+        // ASM : écrit tileId dans la grille si la position est valide
+        if (!invalidPos) {
+            gameGrid[row][col] = static_cast<u16>(tileId);
+        }
+        break;
+
+    case 2:
+        // ASM : registerLevelChange(tileId, row, col) si position valide
+        if (!invalidPos) {
+            registerLevelChange(tileId, row, col);
+        }
+        break;
+
+    case 3:
+        // ASM : pose un sentinel (0xFFFE), stocke srcRow/srcCol, puis handleSpecialSentinelClick
+        if (!invalidPos) {
+            gameGrid[row][col] = static_cast<u16>(CELL_FLAG_SENTINEL);
+            srcRow = row;
+            srcCol = col;
+            handleSpecialSentinelClick();
+        }
+        break;
+
+    default:
+        // autres valeurs : no-op, comme dans l’ASM
+        break;
+    }
+}
+
+void updateGridCell(i16 row, i16 col)
+{
+    LegacyGfxBackend::DcHandle tempDc =
+        LegacyGfxBackend::createCompatibleDC(g_hdc2);
+    if (!tempDc) {
+        return;
+    }
+
+    const i16 cellValue = static_cast<i16>(gameGrid[row][col]);
+
+    if (cellValue >= 0) {
+        LegacyGfxBackend::selectObject(tempDc, bitmap_block);
+
+        renderEntityToWindow(static_cast<int16_t>(cellValue));
+    }
+    else if (cellValue == CELL_FLAG_SENTINEL) {
+        LegacyGfxBackend::selectObject(tempDc, bitmap_kye);
+
+        const i16 destY = static_cast<i16>(row * cellHeight);
+        const i16 destX = static_cast<i16>(col * cellWidth);
+
+        LegacyGfxBackend::blitToWindow(
+            g_hdc2,
+            destX,
+            destY,
+            static_cast<i16>(cellWidth),
+            static_cast<i16>(cellHeight),
+            tempDc,
+            0,
+            0,
+            static_cast<u32>(SRCCOPY) 
+        );
+    }
+    else if (cellValue == CELL_FLAG_EMPTY) {
+        drawRectangleFromGrid(row, col);
+    }
+    else {
+        LegacyGfxBackend::selectObject(tempDc, bitmap_wall);
+        renderWallTile(row, col, tempDc);
+    }
+    LegacyGfxBackend::deleteDC(tempDc);
+}
+
+void renderWallTile(i16 row, i16 col, LegacyGfxBackend::DcHandle srcDc)
+{
+    const i16 rawValue = static_cast<i16>(gameGrid[row][col]);
+
+    if (rawValue > static_cast<i16>(0xFFFD)) {
+        return;
+    }
+    if (rawValue < static_cast<i16>(0xFFEF)) {
+        return;
+    }
+
+    const i16 destY = static_cast<i16>(row * cellHeight);
+    const i16 destX = static_cast<i16>(col * cellWidth);
+
+    i16 srcX = 0;
+    constexpr i16 srcY = 0;
+    constexpr i16 tileSize = 0x10;
+    constexpr u32 ROP_SRCCOPY = 0x00CC0020; 
+
+    if (rawValue <= static_cast<i16>(0xFFFD) &&
+        rawValue >= static_cast<i16>(0xFFF5))
+    {
+        const i16 absVal =
+            (rawValue < 0) ? static_cast<i16>(-rawValue) : rawValue;
+        const i16 absFFFD =
+            (static_cast<i16>(0xFFFD) < 0)
+                ? static_cast<i16>(-static_cast<i16>(0xFFFD))
+                : static_cast<i16>(0xFFFD);
+
+        const i16 delta = static_cast<i16>(absVal - absFFFD); // 0..8
+        srcX = static_cast<i16>(0x30 + (delta << 4));         // 0x30 + 16*delta
+    }
+    else if (rawValue == static_cast<i16>(0xFFF4)) {
+        // 0xFFF4 : brique jaune / spéciale -> source à X=0
+        srcX = 0x00;
+    }
+    else if (rawValue == static_cast<i16>(0xFFF3)) {
+        // 0xFFF3 : diamant -> source à X=0xC0
+        srcX = 0x00C0;
+    }
+    else if (rawValue == static_cast<i16>(0xFFF2) ||
+             rawValue == static_cast<i16>(0xFFF1))
+    {
+        // 0xFFF2 / 0xFFF1 : flèches/bloqueurs horizontaux -> X=0xE0
+        srcX = 0x00E0;
+    }
+    else if (rawValue == static_cast<i16>(0xFFF0) ||
+             rawValue == static_cast<i16>(0xFFEF))
+    {
+        // 0xFFF0 / 0xFFEF : flèches/bloqueurs verticaux -> X=0xD0
+        srcX = 0x00D0;
+    }
+    else {
+        // Autre valeur du range négatif 0xFFEF..0xFFFD : en pratique,
+        // l’ASM tombe ici et sort -> on ne dessine rien.
+        return;
+    }
+
+    // 4) On blitte la tuile du DC source (bitmap_wall déjà sélectionné)
+    LegacyGfxBackend::blitToWindow(
+        g_hdc2,
+        destX,
+        destY,
+        tileSize,
+        tileSize,
+        srcDc,
+        srcX,
+        srcY,
+        ROP_SRCCOPY
+    );
+}
+
+bool isCurrentEntryActionActive()
+{
+    if (!hasLevelList) {
+        return false;
+    }
+
+    if (currentEntryIndex < 0 || currentEntryIndex >= kMaxLevelEntries) {
+        return false;
+    }
+
+    const LevelEntry& entry = g_levelEntries[currentEntryIndex];
+    return entry.isActive != 0;
+}
+
+void cancelPendingInteraction()
+{
+    if (g_isMouseCaptured != 0) {
+        ::ReleaseCapture();
+        g_isMouseCaptured = 0;
+    }
+
+    if (g_interactionMode == GameInteractionMode::PendingBlock) {
+        g_hasPendingModal = 0;
+        matchedEntryCount  = 0;
+        maybeDrawPendingRectangle();
+    }
+}
+
+
+int showToolboxWindowAndRefreshHUD()
+{
+    static bool toolboxCreated = false;
+
+    if (!toolboxCreated) {
+        WNDCLASSA wc{};
+        wc.style         = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
+        wc.lpfnWndProc   = ToolboxWndProc;
+        wc.cbClsExtra    = 0;
+        wc.cbWndExtra    = 0;
+        wc.hInstance     = g_hInstance;
+        wc.hIcon         = nullptr;
+        wc.hCursor       = nullptr;
+        wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH));
+        wc.lpszMenuName  = nullptr;
+        wc.lpszClassName = "Kye-Tools";
+
+        if (!RegisterClassA(&wc)) {
+            return 0;
+        }
+
+        g_hdc2 = CreateWindowA(
+            "Kye-Tools",
+            "Kye-Tools",
+            0x80C0,
+            0,
+            0x32,
+            0x5A,
+            0x52,
+            g_hdc2,
+            nullptr,
+            g_hInstance,
+            nullptr
+        );
+
+        if (!g_hdc2) {
+            return 0;
+        }
+
+        toolboxCreated = true;
+    }
+
+    handleSpecialSentinelClick();
+
+    ShowWindow(g_hdc2, SW_SHOW);
+
+    if (g_currentNameIndex >= 0 &&
+        g_currentNameIndex < static_cast<int>(g_nameTable.size()))
+    {
+        g_currentName = g_nameTable[static_cast<std::size_t>(g_currentNameIndex)];
+    }
+
+    initializeWindowHandleIfNeeded();
+    renderLivesAndLevelInfo();
+    releaseDialogResources();
+
+    return 1;
+}
+
+enum class InteractionMode : uint8_t { Run = 0, Edit = 1 };
+
+static bool handleMainMenuCommand(uint32_t wParamPacked /*, HWND hwnd */) {
+    const uint16_t commandId = static_cast<uint16_t>(wParamPacked >> 16);
+
+    switch (commandId) {
+        case 0x0066: { // 'f' Quit
+            PostQuitMessage(0);
+            return true;
+        }
+
+        case 0x0065: { // 'e' Restart from level 1
+            levelIndex = 1;
+            loadLevelByIndex(1);
+            matchedEntryCount = 0;
+            clearStatusLine(g_hintText); // 0x29FA
+            invalidateAndRedrawMainWindow();
+            return true;
+        }
+
+        case 0x00C9: { // Restart (or abort edit)
+            if (g_interactionMode == InteractionMode::Run) {
+                loadLevelByIndex(levelIndex);
+                clearStatusLine(g_hintText);
+                matchedEntryCount = 0;
+                invalidateAndRedrawMainWindow();
+                return true;
+            }
+
+            // Leaving edit mode (abort edit)
+            g_interactionMode = InteractionMode::Run;
+            hideSecondaryWindow();
+            restoreRunModeMenus();
+            enableMenuItemRestartFromLevel1(false); // id 0x65
+            loadLevelByIndex(levelIndex);
+            clearStatusLine(g_hintText);
+            matchedEntryCount = 0;
+            g_timerActive = true;
+            invalidateAndRedrawMainWindow();
+            initializeWindowSize();
+            return true;
+        }
+
+        case 0x00CA: { // Goto level... (run) / Edit Hint (edit)
+            if (g_interactionMode == InteractionMode::Run) {
+                g_timerActive = false;
+
+                // showNameInputDialog writes into g_nameInputBuffer (0x2B90) seeded from default (0x0087)
+                seedNameInputDefault();
+                showNameInputDialog();
+                strupr16(g_nameInputBuffer);
+
+                const int match = findMatchingLineInFile(g_nameInputBuffer);
+                if (match > 0) {
+                    levelIndex = match;
+                    loadLevelByIndex(levelIndex);
+                    matchedEntryCount = 0;
+                    clearStatusLine(g_hintText);
+                    invalidateAndRedrawMainWindow();
+                } else if (!isEmptyString(g_nameInputBuffer)) {
+                    showMessage(/*caption*/0x88, /*text*/0x91);
+                }
+
+                g_timerActive = true;
+                return true;
+            }
+
+            // Edit hint
+            char tempText[0x50];
+            copyString(tempText, g_hintText);
+            if (handleInputDialog(tempText, /*label*/0x9F) != 0) return true; // canceled
+            copyString(g_hintText, tempText);
+            clearStatusLine(g_hintText);
+            return true;
+        }
+
+        case 0x00CB: { // File... (run) / Edit Name (edit)
+            if (g_interactionMode == InteractionMode::Run) {
+                showOpenFileDialogAndBuildFullPath(g_selectedLevelPath /*0x1A0*/);
+                loadLevelByIndex(levelIndex);
+                clearStatusLine(g_hintText);
+                updateNextLevelMenuItem();
+                matchedEntryCount = 0;
+                invalidateAndRedrawMainWindow();
+                initializeWindowSize();
+                return true;
+            }
+
+            // Edit name
+            char tempText[0x50];
+            copyString(tempText, g_levelName /*0x2A9A*/);
+            if (handleInputDialog(tempText, /*label*/0xB3) != 0) return true; // canceled
+            if (strlen16(tempText) >= 0x14) return true; // reject if too long (>=20)
+            strupr16(tempText);
+            copyString(g_levelName, tempText);
+            return true;
+        }
+
+        case 0x00CC: { // Toggle Edit/Run
+            if (g_interactionMode == InteractionMode::Run) {
+                levelIndex = 1;
+                loadLevelByIndex(1);
+
+                if (levelCount > 1) {
+                    showMessage(/*caption*/0xC8, /*text*/0xE7);
+                    return true;
+                }
+
+                g_interactionMode = InteractionMode::Edit;
+                g_timerActive = false;
+                showToolboxWindowAndRefreshHUD();
+                setEditModeMenus();
+                enableMenuItemRestartFromLevel1(true); // id 0x65
+                invalidateAndRedrawMainWindow();
+                initializeWindowSize();
+                return true;
+            }
+
+            // Edit -> Run (commit)
+            g_interactionMode = InteractionMode::Run;
+            hideSecondaryWindow();
+            restoreRunModeMenus();
+            enableMenuItemRestartFromLevel1(false); // id 0x65
+            generateFileFromMappedData();
+            loadLevelByIndex(levelIndex);
+            clearStatusLine(g_hintText);
+            matchedEntryCount = 0;
+            g_timerActive = true;
+            invalidateAndRedrawMainWindow();
+            initializeWindowSize();
+            return true;
+        }
+
+        case 0x012D: { // option toggle (checkmark)
+            g_optionToggleFlag = !g_optionToggleFlag;
+            checkMenuItem(0x012D, g_optionToggleFlag);
+            return true;
+        }
+
+        case 0x0385: { // Help
+            WinHelp(g_hwnd, "kyehelp.hlp", 3, 0);
+            return true;
+        }
+        case 0x0386: { // Help (other topic)
+            WinHelp(g_hwnd, g_helpTopicString /*unk_847D*/, 4, 0);
+            return true;
+        }
+        case 0x038D: { // What?
+            showWhatDialog();
+            return true;
+        }
+
+        default:
+            return false;
+    }
+}
+
+
+int hideSecondaryWindow()
+{
+    if (g_hdc2 != nullptr) {
+        ShowWindow(g_hdc2, SW_HIDE);
+    }
+    return 1;
+}
+
+inline void toUpperInPlace(std::string& s)
+{
+    for (char& c : s) {
+        unsigned char ch = static_cast<unsigned char>(c);
+        c = static_cast<char>(std::toupper(ch));
+    }
+}
+
+void updateNextLevelMenuItem()
+{
+    HMENU menu = GetMenu(g_hdc);
+    if (!menu) {
+        return;
+    }
+
+    if (levelCount == 1) {
+        EnableMenuItem(menu, 0xCC, MF_BYCOMMAND | MF_GRAYED);
+    } else {
+        EnableMenuItem(menu, 0xCC, MF_BYCOMMAND | MF_ENABLED);
+    }
+}
+
+int showMessageById(uint16_t messageId, uint16_t captionId)
+{
+    const char* message = getUiStringById(messageId);
+    const char* caption = getUiStringById(captionId);
+
+    if (!message) {
+        message = "";
+    }
+    if (!caption) {
+        caption = "";
+    }
+
+    return MessageBoxA(g_hdc, message, caption, MB_OK | MB_ICONINFORMATION);
+}
+
+void appendSuffixToPath(char* basePath, std::size_t baseCapacity, const char* suffix)
+{
+    if (!basePath || baseCapacity == 0) {
+        return;
+    }
+
+    std::size_t len = ::strnlen(basePath, baseCapacity);
+
+    if (len > 0) {
+        const char last = basePath[len - 1];
+        if (last != '\\' && last != ':') {
+            if (len + 1 < baseCapacity) {
+                basePath[len] = '\\';
+                ++len;
+                basePath[len] = '\0';
+            }
+        }
+    }
+
+    if (!suffix) {
+        return;
+    }
+
+    if (len >= baseCapacity - 1) {
+        return;
+    }
+
+    const std::size_t remaining = baseCapacity - len;
+    std::strncpy(basePath + len, suffix, remaining - 1);
+    basePath[baseCapacity - 1] = '\0';
+}
+
+static OpenFileDialogResult runOpenFileDialogModal(/* ui deps */) {
+    OpenFileDialogResult r;
+    // ...
+    // r.accepted = true/false
+    // r.selectedDir = ...
+    // r.filename = ...
+    return r;
+}
+
+static bool showOpenFileDialogAndBuildFullPath(std::string& outFullPath) {
+    const OpenFileDialogResult r = runOpenFileDialogModal();
+    if (!r.accepted) return false;
+
+    outFullPath = joinPath(r.selectedDir, r.filename);
+    return true;
+}
+
+
+void showOpenFileDialogInternal()
+{
+    g_openFileDialogAccepted = false;
+    g_openFileDialogPath[0] = '\0';
+
+    OPENFILENAMEA ofn{};
+    char fileBuffer[260] = {0};
+
+    ofn.lStructSize     = sizeof(ofn);
+    ofn.hwndOwner       = g_hdc;
+    ofn.hInstance       = g_hInstance;
+    ofn.lpstrFilter     = "Tous les fichiers\0*.*\0\0";
+    ofn.lpstrFile       = fileBuffer;
+    ofn.nMaxFile        = sizeof(fileBuffer);
+    ofn.Flags           = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    ofn.lpstrTitle      = "Ouvrir un fichier Kye";
+
+    if (GetOpenFileNameA(&ofn)) {
+        std::strncpy(g_openFileDialogPath, fileBuffer, sizeof(g_openFileDialogPath) - 1);
+        g_openFileDialogPath[sizeof(g_openFileDialogPath) - 1] = '\0';
+        g_openFileDialogAccepted = true;
+    }
+}
+
+void handlePendingInteractionClick(int x, int y)
+{
+    int localX = x;
+    int localY = y;
+
+    if (!isPointInRect(localX, localY)) {
+        return;
+    }
+
+    if (g_interactionMode != GameInteractionMode::NormalPlay) {
+        return;
+    }
+
+    if (matchedEntryCount != 0) {
+        matchedEntryCount = 0;
+        maybeDrawPendingRectangle();
+        return;
+    }
+
+    int rowIndex = localX / cellHeight;
+    int colIndex = localY / cellWidth;
+
+    handlePendingBlock(rowIndex, colIndex);
+
+    previousRow = rowIndex;
+    previousCol = colIndex;
+    g_hasPendingModal = 1;
+    matchedEntryCount = 1;
+}
+
+void handlePendingInteractionFinalize(int x, int y)
+{
+    int localX = x;
+    int localY = y;
+
+    // En dehors de la zone clickable → juste mettre le curseur et sortir
+    if (!isPointInRect(localX, localY)) {
+        SetCursor(g_mainCursor);
+        return;
+    }
+
+    // Si on n’est pas en mode « jeu normal », idem : juste curseur
+    if (g_interactionMode != GameInteractionMode::NormalPlay) {
+        SetCursor(g_mainCursor);
+        return;
+    }
+
+    // Dans la zone et en mode NormalPlay → curseur spécial + calcul de case
+    SetCursor(g_mainCursor);
+
+    int rowIndex = localX / cellHeight;  // SI
+    int colIndex = localY / cellWidth;   // DI
+
+    // Si aucun matchedEntryCount en cours, on ne fait rien de plus
+    if (matchedEntryCount == 0) {
+        return;
+    }
+
+    // Sinon on finalise le « pending block »
+    handlePendingBlock(rowIndex, colIndex);
+    previousRow = rowIndex;
+    previousCol = colIndex;
+    g_hasPendingModal = 1;
+}
+
+
+void initMainCursor()
+{
+    if (!g_mainCursor) {
+        // À adapter si tu veux un autre type de curseur
+        g_mainCursor = g_cursorArrow(nullptr, IDC_ARROW);
+    }
+}
+
+void updateAnimatedBlocksSprites()
+{
+    if ((frameCounter % 5) != 0) {
+        return;
+    }
+
+    LegacyGfxBackend::DcHandle tempDC =
+        LegacyGfxBackend::createCompatibleDC(g_hdc);
+    if (!tempDC) {
+        return;
+    }
+
+    LegacyGfxBackend::selectObject(tempDC, bitmap_block);
+
+    for (uint16_t index = 0; index < g_activeSpawnerCount; ++index) {
+        uint16_t type = g_gameState.entityTypes[index];
+        if (type != 0x1F && type != 0x20) {
+            continue;
+        }
+
+        uint16_t row = g_gameState.entityRows[index];
+        uint16_t col = g_gameState.entityCols[index];
+
+        int destY = static_cast<int>(row) * cellHeight;
+        int destX = static_cast<int>(col) * cellWidth;
+
+        uint16_t phase = g_gameState.entityAnimationPhase[index];
+        int srcX = (static_cast<int>(phase) << 4) + 0x40;
+        int srcY = (type == 0x1F) ? 0x80 : 0x90;
+
+        LegacyGfxBackend::bitBlt(
+            g_hdc,
+            static_cast<i16>(destX),
+            static_cast<i16>(destY),
+            0x10,
+            0x10,
+            tempDC,
+            static_cast<i16>(srcX),
+            static_cast<i16>(srcY),
+            SRCCOPY
+        );
+
+        if (type == 0x20 && phase == 3) {
+            g_gameState.entityTypes[index] = 0x1F;
+        }
+
+        phase = static_cast<uint16_t>((phase + 1) % 4);
+        g_gameState.entityAnimationPhase[index] = phase;
+    }
+
+    LegacyGfxBackend::deleteDC(tempDC);
+}
+
+LRESULT WndProc(void* hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    const int16_t x = LOWORD_(lParam);
+    const int16_t y = HIWORD_(lParam);
+
+    switch (msg)
+    {
+        // 0x0111
+        case 0x0111: // WM_COMMAND
+            // asm: return DX:AX = handleMainMenuCommand(wParam, lParam)
+            return handleMainMenuCommand(wParam, lParam);
+
+        // < 0x0111
+        case 0x000F: // WM_PAINT
+            // asm: push dx ; call sub_35C
+            sub_35C(x);
+            return 0;
+
+        case 0x0001: // (probablement WM_CREATE)
+            // asm: jmp loc_D60 => return 0
+            return 0;
+
+        case 0x0002: // WM_DESTROY
+            sub_10C0();
+            PostQuitMessage(0);
+            return 0;
+
+        case 0x0005: // WM_SIZE
+            // asm: DefWindowProc, return direct
+            return DefWindowProcA(hWnd, msg, wParam, lParam);
+
+        // 0x0100 / 0x0101
+        case 0x0100: // WM_KEYDOWN
+            word_836E = 1;
+            sub_573(wParam, lParam);
+            return 0;
+
+        case 0x0101: // WM_KEYUP
+            word_836E = 0;
+            return 0;
+
+        // > 0x0111
+        case 0x0113: // WM_TIMER
+            if (g_timerActive != 0)
+            {
+                advanceToNextLevelOrBlock();
+                updateLevelVisualsAndAnimations();
+                g_timerActive = 1; // exactement comme l'asm (même si “étrange”)
+            }
+            return 0;
+
+        // Souris
+        case 0x0200: // WM_MOUSEMOVE
+            handlePendingInteractionFinalize(y, x, hWnd);
+            return 0;
+
+        case 0x0201: // WM_LBUTTONDOWN
+            handleGameClick(wParam, y, x, hWnd);
+            return 0;
+
+        case 0x0202: // WM_LBUTTONUP
+            cancelPendingInteraction(y, x, hWnd);
+            return 0;
+
+        case 0x0203: // WM_LBUTTONDBLCLK
+            handlePointClick(wParam, y, x, hWnd);
+            return 0;
+
+        case 0x0204: // WM_RBUTTONDOWN
+            handlePendingInteractionClick(wParam, y, x, hWnd);
+            return 0;
+
+        default:
+            // asm: loc_D4C => DefWindowProc(...)
+            return DefWindowProcA(hWnd, msg, wParam, lParam);
+    }
+}
+
+void animateDiamondsEvery10Frames()
+{
+    if ((frameCounter % 10) != 0)
+        return;
+
+    HDC memDC = CreateCompatibleDC(reinterpret_cast<HDC>(g_hdc));
+    SelectObject(memDC, bitmap_wall);
+
+    constexpr uint16_t TILE_DIAMOND = 0xFFF3;
+
+    for (int row = 0; row < GameState::GRID_COLS ; ++row)
+    {
+        for (int col = 0; col < GameState::GRID_ROWS ; ++col)
+        {
+            if (gameGrid[col][row] != TILE_DIAMOND)
+                continue;
+
+            const int dstY = row * cellHeight;
+            const int dstX = col * cellWidth;
+
+            int srcY = 0;
+
+            const int16_t r16 = pseudoRandomUpdate();
+            const uint32_t r32 = static_cast<uint16_t>(r16);
+            const uint64_t prod = multiply32x32to64(r32, 3u);
+            const uint16_t q = divide64_unsigned(prod);
+
+            if (q == 1)
+                srcY = 0x10;
+
+            BitBlt(
+                reinterpret_cast<HDC>(g_hdc),
+                dstX, dstY,
+                16, 16,
+                memDC,
+                0xC0, srcY,
+                0x00CC0020 
+            );
+        }
+    }
+
+    DeleteDC(memDC);
+}
+
+void animateOneWayTilesEvery4Frames()
+{
+    if ((frameCounter % 4) != 0)
+        return;
+
+    HDC memDC = CreateCompatibleDC(reinterpret_cast<HDC>(g_hdc));
+    SelectObject(memDC, bitmap_wall);
+
+    // Toggle frame (asm: word_907A + var_4)
+    int srcY = 0;
+    if (g_oneWayAnimPhase != 0)
+    {
+        srcY = 0x00;
+        g_oneWayAnimPhase = 0;
+    }
+    else
+    {
+        srcY = 0x10;
+        g_oneWayAnimPhase = 1;
+    }
+
+    constexpr uint16_t TILE_ONEWAY_LTR = 0xFFF2;
+    constexpr uint16_t TILE_ONEWAY_RTL = 0xFFF1;
+    constexpr uint16_t TILE_ONEWAY_TTB = 0xFFF0;
+    constexpr uint16_t TILE_ONEWAY_BTT = 0xFFEF;
+
+    constexpr int kTileW = 16;
+    constexpr int kTileH = 16;
+    constexpr uint32_t kRopSrcCopy = 0x00CC0020;
+
+    for (int row = 0; row < GameState::GRID_COLS; ++row)
+    {
+        for (int col = 0; col < GameState::GRID_ROWS ; ++col) 
+        {
+            const uint16_t tile = gameGrid[col][row];
+
+            if (tile == TILE_ONEWAY_LTR || tile == TILE_ONEWAY_RTL)
+            {
+                const int dstY = row * cellHeight;
+                const int dstX = col * cellWidth;
+
+                BitBlt(
+                    reinterpret_cast<HDC>(g_hdc),
+                    dstX, dstY,
+                    kTileW, kTileH,
+                    memDC,
+                    0xE0, srcY,
+                    kRopSrcCopy
+                );
+            }
+            else if (tile == TILE_ONEWAY_TTB || tile == TILE_ONEWAY_BTT)
+            {
+                const int dstY = row * cellHeight;
+                const int dstX = col * cellWidth;
+
+                BitBlt(
+                    reinterpret_cast<HDC>(g_hdc),
+                    dstX, dstY,
+                    kTileW, kTileH,
+                    memDC,
+                    0xD0, srcY,
+                    kRopSrcCopy
+                );
+            }
+        }
+    }
+
+    DeleteDC(memDC);
+}
+
+static inline bool isCellEmpty_asmLayout(int row, int col)
+{
+    return gameGrid[col][row] == 0xFFFF;
+}
+
+static void placeTileAndSpawnEntityIfEmpty_Core(
+    int row, int col, int tileId,
+    uint16_t* spawnCounterPtr
+)
+{
+    if (!isCellEmpty_asmLayout(row, col))
+        return;
+
+    *spawnCounterPtr = 0;
+
+    const int spawnedEntityIndex = registerLevelChange(tileId, row, col);
+    moveAndRedrawEntity(spawnedEntityIndex, row, col);
+}
+
+void def_5AE1_tryPlaceAndSpawn(int row, int col, int tileId, uint16_t* spawnCounterPtr)
+{
+    placeTileAndSpawnEntityIfEmpty_Core(row, col, tileId, spawnCounterPtr);
+}
+
+void def_5BCD_tryPlaceAndSpawn(int row, int col, int tileId, uint16_t* spawnCounterPtr)
+{
+    placeTileAndSpawnEntityIfEmpty_Core(row, col, tileId, spawnCounterPtr);
+}
+
+void tickSpawnersEvery7Frames()
+{
+    if ((frameCounter % 7) != 0)
+    {
+        finalizeLevelVisuals();
+        return;
+    }
+
+    for (int spawnerIndex = 0; spawnerIndex < g_activeSpawnerCount; ++spawnerIndex)
+    {
+        const int byteOffset = spawnerIndex * 8;
+
+        uint16_t& spawnerPhase = *reinterpret_cast<uint16_t*>(
+            reinterpret_cast<uint8_t*>(g_spawners.spawnerPhaseBase) + byteOffset);
+
+        uint16_t& spawnDelayCounter = *reinterpret_cast<uint16_t*>(
+            reinterpret_cast<uint8_t*>(g_spawners.spawnDelayCounterBase) + byteOffset);
+
+        const int baseRow = *reinterpret_cast<uint16_t*>(
+            reinterpret_cast<uint8_t*>(g_spawners.spawnerBaseRowBase) + byteOffset);
+
+        const int baseCol = *reinterpret_cast<uint16_t*>(
+            reinterpret_cast<uint8_t*>(g_spawners.spawnerBaseColBase) + byteOffset);
+
+        const bool isGroupA = (spawnerPhase >= 0x17 && spawnerPhase <= 0x1A);
+        const bool isGroupB = (spawnerPhase >= 0x1B && spawnerPhase <= 0x1E);
+        if (!isGroupA && !isGroupB)
+            continue;
+
+        if (isGroupA)
+        {
+            ++spawnerPhase;
+            if (spawnerPhase > 0x1A) spawnerPhase = 0x17;
+        }
+        else
+        {
+            ++spawnerPhase;
+            if (spawnerPhase > 0x1E) spawnerPhase = 0x1B;
+        }
+
+        moveAndRedrawEntity(spawnerIndex, baseRow, baseCol);
+
+        if (spawnDelayCounter < baseCol)
+        {
+            ++spawnDelayCounter;
+            continue;
+        }
+
+        int targetRow = baseRow;
+        int targetCol = baseCol;
+        int spawnTileId = 0;
+
+        if (isGroupA)
+        {
+            switch (spawnerPhase)
+            {
+                case 0x17: spawnTileId = 4;  targetRow = baseRow + 1; targetCol = baseCol;     break;
+                case 0x18: spawnTileId = 1;  targetRow = baseRow;     targetCol = baseCol - 1; break;
+                case 0x19: spawnTileId = 3;  targetRow = baseRow - 1; targetCol = baseCol;     break;
+                case 0x1A: spawnTileId = 2;  targetRow = baseRow;     targetCol = baseCol + 1; break;
+                default: break;
+            }
+            trySpawnFromGroupAIfTargetEmpty(targetRow, targetCol, spawnTileId, spawnDelayCounter);
+        }
+        else
+        {
+            switch (spawnerPhase)
+            {
+                case 0x1B: spawnTileId = 0x0E; targetRow = baseRow + 1; targetCol = baseCol;     break;
+                case 0x1C: spawnTileId = 0x0B; targetRow = baseRow;     targetCol = baseCol - 1; break;
+                case 0x1D: spawnTileId = 0x0D; targetRow = baseRow - 1; targetCol = baseCol;     break;
+                case 0x1E: spawnTileId = 0x0C; targetRow = baseRow;     targetCol = baseCol + 1; break;
+                default: break;
+            }
+            trySpawnFromGroupBIfTargetEmpty(targetRow, targetCol, spawnTileId, spawnDelayCounter);
+        }
+    }
+
+    finalizeLevelVisuals();
+}
+
+void trySpawnFromGroupBIfTargetEmpty(int targetRow, int targetCol, int spawnTileId, uint16_t& spawnDelayCounter)
+{
+    spawnAtIfEmpty(targetRow, targetCol, spawnTileId, spawnDelayCounter);
+}
+
+static inline bool isGridCellEmpty(int targetRow, int targetCol)
+{
+    return gameGrid[targetCol][targetRow] == 0xFFFF;
+}
+
+void trySpawnFromGroupAIfTargetEmpty(int targetRow, int targetCol, int spawnTileId, uint16_t& spawnDelayCounter)
+{
+    spawnAtIfEmpty(targetRow, targetCol, spawnTileId, spawnDelayCounter);
+}
+
+static inline void spawnAtIfEmpty(int targetRow, int targetCol, int spawnTileId, uint16_t& spawnDelayCounter)
+{
+    if (!isGridCellEmpty(targetRow, targetCol))
+        return;
+
+    spawnDelayCounter = 0;
+
+    const int spawnedEntityIndex = registerLevelChange(spawnTileId, targetRow, targetCol);
+    moveAndRedrawEntity(spawnedEntityIndex, targetRow, targetCol);
+}
+
+void updateLevelVisualsAndAnimations()
+{
+    renderSpawnerSpritesEvery3Frames();
+    animateDiamondsEvery10Frames();
+    animateOneWayTilesEvery4Frames();
+    tickSpawnersEvery7Frames();
+    updateAnimatedBlocksSprites();
+}
+
+void renderSpawnerSpritesEvery3Frames()
+{
+    if ((frameCounter % 3) != 0)
+        return;
+
+    HDC wndDC = GetDC(g_hdc);
+    if (!wndDC) return;
+
+    HDC memDC = CreateCompatibleDC(wndDC);
+    if (!memDC) { ReleaseDC(g_hdc, wndDC); return; }
+
+    HGDIOBJ oldBmp = SelectObject(memDC, bitmap_block);
+
+    auto* base = reinterpret_cast<uint8_t*>(g_spawners.spawnerPhaseBase);       // 0x172E
+    auto* rowB = reinterpret_cast<uint8_t*>(g_spawners.spawnerBaseRowBase);     // 0x1730
+    auto* colB = reinterpret_cast<uint8_t*>(g_spawners.spawnerBaseColBase);     // 0x1732
+    auto* frmB = reinterpret_cast<uint8_t*>(g_spawners.spawnDelayCounterBase);  // 0x1734
+
+    for (int spawnerIndex = 0; spawnerIndex < g_activeSpawnerCount; ++spawnerIndex)
+    {
+        const int byteOffset = spawnerIndex * 8;
+
+        const uint16_t spawnerPhase = *reinterpret_cast<uint16_t*>(base + byteOffset);
+        if (spawnerPhase < 0x0F || spawnerPhase > 0x13)
+            continue;
+
+        const int spawnerRow = *reinterpret_cast<uint16_t*>(rowB + byteOffset);
+        const int spawnerCol = *reinterpret_cast<uint16_t*>(colB + byteOffset);
+        uint16_t& spawnerAnimFrame = *reinterpret_cast<uint16_t*>(frmB + byteOffset);
+
+        const int dstY = spawnerRow * cellHeight;
+        const int dstX = spawnerCol * cellWidth;
+
+        const int srcX = static_cast<int>(spawnerPhase) << 4;
+        const int srcY = static_cast<int>(spawnerAnimFrame) << 4;
+
+        BitBlt(wndDC, dstX, dstY, 16, 16, memDC, srcX, srcY, SRCCOPY);
+
+        spawnerAnimFrame = static_cast<uint16_t>((spawnerAnimFrame + 1) & 3);
+    }
+
+    SelectObject(memDC, oldBmp);
+    DeleteDC(memDC);
+    ReleaseDC(g_hdc, wndDC);
+}
+
+void handleDirectionalHotkeyAndAdvanceLevel(uint16_t key)
+{
+    if (g_interactionMode != GameInteractionMode::NormalPlay) // asm: ==0
+        return;
+
+    Delta delta{};
+    if (!decodeDirectionalHotkey(key, delta))
+        return;
+
+    previousRow = static_cast<int>(srcRow) + delta.dRow;
+    previousCol = static_cast<int>(srcCol) + delta.dCol;
+
+    g_hasPendingModal = 1;
+
+    tickLevelFlow();
+    updateLevelVisualsAndAnimations();
+}
+
+static bool decodeDirectionalHotkey(uint16_t key, Delta& out)
+{
+    switch (key)
+    {
+        case '!': out = { +1,  0 }; return true; // 33
+        case '"': out = { +1, +1 }; return true; // 34
+        case '#': out = { +1, -1 }; return true; // 35
+        case '$': out = { -1, -1 }; return true; // 36
+        case '%': out = { -1,  0 }; return true; // 37
+        case '&': out = {  0, +1 }; return true; // 38
+        case '\'':out = {  0, -1 }; return true; // 39
+        case '(': out = { -1, +1 }; return true; // 40
+        default:  return false;
+    }
+}
+
+
+static inline const char* ptr16_to_cstr(uint16_t off)
+{
+    if (off == 0x29FA) return displayTextBuffer;
+    return "";
+}
+
+
+
+void tickLevelFlow()
+{
+    g_timerActive = false;
+
+    initializeWindowHandleIfNeeded();
+
+    if (g_hasPendingModal != 0)
+        handleDialogClose();
+
+    if (hasLevelList != 0)
+    {
+        if (levelIndex >= levelCount)
+        {
+            showFinalDialog();
+            levelIndex = 1;
+        }
+        else
+        {
+            showLevelDoneDialog();
+            ++levelIndex;
+        }
+
+        loadLevelByIndex(levelIndex);
+        showNewLevelDialog();
+
+        matchedEntryCount = 0;
+
+        clearStatusLine("");
+
+        InvalidateRect(g_mainWindow, nullptr, TRUE);
+        UpdateWindow(g_mainWindow);
+    }
+    else
+    {
+        gameMainLoop();
+
+        if (remainingLives < 0)
+        {
+            runTileSparkleEffectSdl(2);
+            drawRectangleFromGrid(srcRow, srcCol);
+            showGameOverDialog();
+
+            matchedEntryCount = 0;
+            loadLevelByIndex(levelIndex);
+            clearStatusLine("");
+
+            InvalidateRect(g_mainWindow, nullptr, TRUE);
+            UpdateWindow(g_mainWindow);
+        }
+        else if (hasLevelTransition != 0)
+        {
+            handleDialogClose();
+        }
+
+        advanceToNextLevelOrBlock();
+    }
+
+    g_timerActive = true;
+}
+
+void updateDisplayString(const char* str) {
+    if (!str) str = "";
+    const std::size_t cap = static_cast<std::size_t>(stringBufferCapacity);
+    if (cap == 0) return;
+    std::strncpy(stringBuffer, str, cap - 1);
+    stringBuffer[cap - 1] = '\0';
+    g_needsRedraw = true;
+}
+
+template <typename T>
+static inline void gdiDelete(T& obj) noexcept
+{
+    if (!obj) return;
+    DeleteObject(reinterpret_cast<HGDIOBJ>(obj));
+    obj = nullptr;
+}
+
+void destroyGdiResources() noexcept
+{
+    gdiDelete(brush_black);
+    gdiDelete(brush_white);
+    gdiDelete(brush_blue);
+    gdiDelete(brush_green);
+    gdiDelete(brush_red);
+    gdiDelete(pen_black);
+    gdiDelete(pen_gray);
+    gdiDelete(pen_blue);
+    gdiDelete(bitmap_kye);
+    gdiDelete(bitmap_block);
+    gdiDelete(bitmap_wall);
+}
+
+static void clearStatusLine(const char* str)
+{
+    if (!str) str = "";
+
+    InvalidateRect(g_mainWindow, nullptr, TRUE);
+
+    const int cap = (g_statusLineCapacity > 0) ? g_statusLineCapacity : 1;
+    std::strncpy(g_statusLineBuffer, str, static_cast<size_t>(cap - 1));
+    g_statusLineBuffer[cap - 1] = '\0';
+}
+
+void renderFullWallLayerSdl()
+{
+    HDC wndDC = GetDC(g_hdc);
+    if (!wndDC) return;
+
+    HDC memDC = CreateCompatibleDC(wndDC);
+    if (!memDC) { ReleaseDC(g_hdc, wndDC); return; }
+
+    HGDIOBJ oldObj = SelectObject(memDC, bitmap_wall);
+
+    for (int row = 0; row < 30; ++row)
+    {
+        for (int col = 0; col < 20; ++col)
+        {
+            renderWallTile(row, col, memDC);
+        }
+    }
+
+    SelectObject(memDC, oldObj);
+    DeleteDC(memDC);
+    ReleaseDC(g_hdc, wndDC);
+}
+
+void renderAllSpawnerEntities()
+{
+    for (int16_t i = 0; i < g_activeSpawnerCount; ++i) {
+        renderEntityToSdl(i);
+    }
+}
+
+void renderFrameByInteractionMode()
+{
+    const auto mode = g_interactionMode;
+
+    if (mode != GameInteractionMode::NormalPlay &&
+        mode != GameInteractionMode::PendingBlock) {
+        return;
+    }
+
+    renderFullWallLayerSdl();
+    renderAllSpawnerEntities();
+
+    if (mode == GameInteractionMode::PendingBlock) {
+        runTileSparkleEffectSdl(0);
+        return;
+    }
+
+    const int effectId = (g_levelJustLoadedFlag != 0) ? 1 : 0;
+    g_levelJustLoadedFlag = 0;
+    runTileSparkleEffectSdl(effectId);
+}
+
+static void dispatchEventWithDefaults(int16_t eventCode)
+{
+    handleEngineEvent(eventCode, /*param0=*/0, /*param1=*/1);
+}
+
+void updateSlotAndDigitsFromCounter(
+    u32 counterLow,                 // arg_0
+    u32 counterHigh,                // arg_2 (mais en pratique on reconstruit 64b)
+    SlotState& slot,                // *arg_4 (si)
+    OutDigits& outDigits            // *arg_6 (di)
+)
+{
+    // Rebuild 64-bit value from 16-bit halves as in original calling convention:
+    // Ici on suppose que counterLow/High viennent déjà “alignés” (sinon adapte à tes wrappers).
+    u64 counter = (static_cast<u64>(counterHigh) << 16) | (static_cast<u64>(counterLow) & 0xFFFFu);
+
+    loadSpeedSettingFromEnvVar();
+
+    // (speedMultiplierHigh:Low) + 0x12CE:A600
+    constexpr u32 kSpeedOffsetLow  = 0xA600u;
+    constexpr u32 kSpeedOffsetHigh = 0x12CEu;
+
+    const u64 speed = (static_cast<u64>(speedMultiplierHigh) << 16) | static_cast<u64>(speedMultiplierLow);
+    const u64 offset = (static_cast<u64>(kSpeedOffsetHigh) << 16) | static_cast<u64>(kSpeedOffsetLow);
+
+    counter = counter - (speed + offset);
+
+    outDigits.zero = 0;
+    {
+        i64 qSigned = 0;
+        outDigits.c = divmodSigned_u8(static_cast<i64>(counter), 60, qSigned);
+
+        u64 qUnsigned = 0;
+        (void)divmodUnsigned_u8(counter, 60, qUnsigned);
+        counter = qUnsigned;
+
+        outDigits.a = divmodSigned_u8(static_cast<i64>(counter), 60, qSigned);
+
+        (void)divmodUnsigned_u8(counter, 60, qUnsigned);
+        counter = qUnsigned;
+    }
+
+    constexpr u32 kDivA = 0x88F8u;
+
+    {
+        u64 q = 0;
+        (void)divmodUnsigned_u8(counter, kDivA, q);
+
+        constexpr u16 kBaseAdd = 0x07BC;
+        const u16 scaled = static_cast<u16>((static_cast<u16>(q & 0xFFFFu) << 2) + kBaseAdd);
+        slot.base = scaled;
+
+        i64 qSigned = 0;
+        (void)divmodSigned_u8(static_cast<i64>(counter), kDivA, qSigned);
+        counter = static_cast<u64>(qSigned);
+    }
+    constexpr u32 kCmp = 0x2250u;
+    constexpr u32 kDivB = 0x2238u;
+
+    if (static_cast<i64>(counter) >= 0 && geUnsigned64(counter, kCmp))
+    {
+        counter -= kCmp;
+        slot.base = static_cast<u16>(slot.base + 1);
+
+        u64 q = 0;
+        (void)divmodUnsigned_u8(counter, kDivB, q);
+        slot.base = static_cast<u16>(slot.base + static_cast<u16>(q & 0xFFFFu));
+
+        i64 qSigned = 0;
+        (void)divmodSigned_u8(static_cast<i64>(counter), kDivB, qSigned);
+        counter = static_cast<u64>(qSigned);
+    }
+
+    if (speedFallbackUsed != 0)
+    {
+        constexpr u32 kDiv24 = 24u;
+        constexpr u16 kPosBias = 0xF84E;
+
+        i64 qS = 0;
+        (void)divmodSigned_u8(static_cast<i64>(counter), kDiv24, qS);
+
+        u64 qU = 0;
+        (void)divmodUnsigned_u8(counter, kDiv24, qU);
+
+        const u16 pos = static_cast<u16>(slot.base + kPosBias);
+        if (canPlaceEntityAtPosition(pos))
+        {
+            counter += 1;
+        }
+    }
+    {
+        constexpr u32 kDiv24 = 24u;
+
+        i64 qS = 0;
+        outDigits.b = divmodSigned_u8(static_cast<i64>(counter), kDiv24, qS);
+
+        u64 qU = 0;
+        (void)divmodUnsigned_u8(counter, kDiv24, qU);
+        counter = qU + 1;
+    }
+
+    if ((slot.base & 3u) == 0)
+    {
+        constexpr u64 k60 = 60;
+
+        if (static_cast<i64>(counter) >= 0 && counter > k60)
+        {
+            counter -= 1;
+        }
+        else if (counter == k60)
+        {
+            slot.index = 2;
+            slot.value = 0x1D;
+            return;
+        }
+    }
+
+    // default path
+    slot.index = 0;
+
+    // emulate:
+    // while (table[index] <= counter) { counter -= table[index]; index++; }
+    // then index++ and value = low(counter)
+    while (true)
+    {
+        const int idx = static_cast<int>(slot.index);
+        const int8_t step = g_thresholdTable[idx];
+        const i64 step64 = static_cast<i64>(step);
+
+        // compare (step as signed 16/32) with counter as signed 64 in asm (cbw/cwd then cmp dx:ax vs arg2:arg0)
+        if (step64 < 0) {
+            // si table contient du négatif, on évite boucle infinie (sûreté)
+            break;
+        }
+
+        if (static_cast<u64>(step64) <= counter)
+        {
+            counter -= static_cast<u64>(step64);
+            slot.index = static_cast<u8>(slot.index + 1);
+            continue;
+        }
+
+        // loc_7B2C behavior: inc index; slot.value = low byte of remaining
+        slot.index = static_cast<u8>(slot.index + 1);
+        slot.value = static_cast<u8>(counter & 0xFFu);
+        break;
+    }
+}
+
+void handlePackedMessage(uint32_t message)
+{
+    const u16 msgLow    = static_cast<u16>(message & 0xFFFFu);
+    const u16 eventCode = static_cast<u16>((message >> 16) & 0xFFFFu);
+
+    showFileMessage(msgLow);
+    dispatchEventWithDefaults(eventCode);
+}
+
+void dispatchNotificationByCode(uint16_t code)
+{
+    extern const u16 kCodes[6];
+
+    u16 eventCode = 1;
+    u16 messageToken = 0x123C;
+
+    bool matched = false;
+    for (int i = 0; i < 6; ++i) {
+        if (kCodes[i] == code) { matched = true; break; }
+    }
+
+    if (!matched) {
+        handlePackedMessage({ messageToken, eventCode });
+        return;
+    }
+
+    handlePackedMessage({ messageToken, eventCode });
+}
+
+static bool handleOpenFileDialogEvent(
+    OpenDialogState& st,
+    DialogMsg msg,
+    uint16_t wParam // “command id”: OK=1, Cancel=2, list=0x194/0x195, etc.
+)
+{
+    switch (msg) {
+        case DialogMsg::InitDialog: {
+            // initOpenFileDialogDirectoryLists(hwnd)
+            // + set "*.kye" + focus
+            ensureDefaultMask(st);
+            st.filenameEdit = st.selectedMask;
+            return false; // fidèle: retourne 0 sur WM_INITDIALOG
+        }
+
+        case DialogMsg::Command: {
+            if (wParam == 2) { // Cancel
+                st.accepted = false;
+                return true;
+            }
+
+            if (wParam == 1) { // OK
+                // GETDLGITEMTEXT(edit) -> st.filenameEdit déjà à jour côté UI
+                if (containsWildcard(st.filenameEdit)) {
+                    // équiv splitPathDirAndName + refresh lists
+                    // (ici, on ne fait que marquer "pas accepté" et laisser UI naviguer)
+                    st.accepted = false;
+                    // initOpenFileDialogDirectoryLists(...)
+                    return true;
+                } else {
+                    // appendDefaultExtensionIfMissing(ds:050C, ds:0699)
+                    // derivedDefaultExt doit être ".kye" ou "kye" selon ce que tu copies en 0x699
+                    appendDefaultExtensionIfMissing(st.filenameEdit, st.derivedDefaultExt.empty() ? "kye" : st.derivedDefaultExt);
+                    st.accepted = true;
+                    return true;
+                }
+            }
+
+            if (wParam == 0x0194 || wParam == 0x0195) {
+                // DLGDIRSELECT + update edit + selection
+                // Ici: placeholder -> côté UI, tu mettras filenameEdit selon la sélection
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    return false;
+}
+
+void handleEvent(const SDL_Event& e) {
+    switch (e.type) {
+        case SDL_EVENT_QUIT:
+            destroyGdiResources();
+            g_running = false;
+            break;
+
+        case SDL_EVENT_KEY_DOWN:
+            g_keyDownFlag = 1;
+            handleDirectionalHotkeyAndAdvanceLevel(
+                (uint16_t)e.key.keysym.sym,
+                0
+            );
+            break;
+
+        case SDL_EVENT_KEY_UP:
+            g_keyDownFlag = 0;
+            break;
+
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            if (e.button.button == SDL_BUTTON_LEFT) {
+                handleGameClick(0, e.button.x, e.button.y, 0);
+            } else if (e.button.button == SDL_BUTTON_RIGHT) {
+                handlePendingInteractionClick(0, e.button.x, e.button.y, 0);
+            }
+            break;
+
+        case SDL_EVENT_MOUSE_BUTTON_UP:
+            if (e.button.button == SDL_BUTTON_LEFT) {
+                cancelPendingInteraction(e.button.x, e.button.y, 0);
+            }
+            break;
+
+        case SDL_EVENT_MOUSE_MOTION:
+            handlePendingInteractionFinalize(e.motion.x, e.motion.y, 0);
+            break;
+
+        default:
+            break;
+    }
+}
+
+void drawHudCellFromIndex(
+    SDL_Renderer* renderer,
+    const HudTextures& tex,
+    int16_t cellIndex
+) {
+    const int16_t row = cellIndex / 0x10;
+    const int16_t col = cellIndex % 0x10;
+
+    const int cellLeft = row * 20;
+    const int cellTop  = col * 20;
+
+    const bool selected = (cellIndex == g_currentNameIndex);
+
+    SDL_Rect cellRect{ cellLeft, cellTop, 20, 20 };
+    drawFrame(renderer, cellRect, selected);
+
+    const HudCellEntry& entry = g_hudCells[cellIndex];
+
+    // équivalent: if ([+6BC] == 0) => computeHudCellRectFromIndex(...)
+    if (entry.hasData == 0) {
+        computeHudCellRectFromIndex(renderer, cellIndex);
+        return;
+    }
+
+    const int dstX = cellLeft + 2;
+    const int dstY = cellTop + 2;
+    SDL_Rect dst{ dstX, dstY, 16, 16 };
+
+    switch (entry.type) {
+        case 0:
+            computeHudCellRectFromIndex(renderer, cellIndex);
+            return;
+
+        case 1: {
+            SDL_Rect src = computeWallSrcRect(entry.value);
+            SDL_RenderTexture(renderer, tex.wall, &src, &dst);
+            return;
+        }
+
+        case 2: {
+            SDL_Rect src = computeBlockSrcRect(entry.value);
+            SDL_RenderTexture(renderer, tex.block, &src, &dst);
+            return;
+        }
+
+        case 3: {
+            SDL_Rect src{ 0, 0, 16, 16 };
+            SDL_RenderTexture(renderer, tex.kye, &src, &dst);
+            return;
+        }
+
+        default:
+            return;
+    }
+}
+
+void copyMappedStringForCode(uint16_t code)
+{
+    const uint16_t idx = static_cast<uint16_t>(code - 0x81);
+
+    const char* selected = nullptr;
+    switch (idx)
+    {
+        case 0:  selected = g_str_1169; break;
+        case 1:  selected = g_str_1171; break;
+        case 2:  selected = g_str_117A; break;
+        case 3:  selected = g_str_1189; break;
+        case 4:  selected = g_str_1192; break;
+        case 5:  selected = g_str_119C; break;
+        case 6:  selected = g_str_11A4; break;
+        // idx 7..8: default
+        case 9:  selected = g_str_11AF; break;
+        case 10: selected = g_str_11BE; break;
+        case 11: selected = g_str_11CE; break;
+        default:
+            selected = nullptr;
+            break;
+    }
+
+    if (selected != nullptr)
+    {
+        copyString(g_messageBuffer_114A, selected);
+        return; // <-- très probablement manquant/masqué dans le listing IDA
+    }
+
+    handlePackedMessage(g_packedMessage_113A, /*arg=*/3);
+}
+
+int dispatchValue(uint16_t value) {
+    const uint16_t index = findIndexInTable(value);
+    if (index == 0xFFFFu) {
+        return 1; // not found / error
+    }
+
+    const uintptr_t entry = g_handlerOrStateTable[index];
+
+    if (entry == 1u) {
+        return 0; // explicitly disabled / already handled / ignore
+    }
+
+    if (entry == 0u) {
+        if (value == 8u) {
+            copyMappedStringForCode(0x8Cu);
+        } else {
+            dispatchNotificationByCode(value);
+        }
+        return 0;
+    }
+
+    // Otherwise: treat as callback and disarm (one-shot)
+    g_handlerOrStateTable[index] = 0u;
+
+    const uint16_t param = static_cast<uint16_t>(g_handlerParamTable[index]);
+    auto* handler = reinterpret_cast<HandlerFn>(entry);
+    handler(param, value);
+
+    return 0;
+}
+
+i16 handleNotificationOrCallbackByCode(u16 eventCode)
+{
+    const i16 slotIndex = findIndexInTable(eventCode);
+    if (static_cast<u16>(slotIndex) == 0xFFFFu) {
+        return 1;
+    }
+
+    const u16 slotWord = g_notificationHandlerSlotWord[static_cast<u16>(slotIndex)];
+
+    // slotWord == 1 => do nothing
+    if (slotWord == 1u) {
+        return 0;
+    }
+
+    // slotWord == 0 => fallback behavior
+    if (slotWord == 0u) {
+        if (eventCode == 8u) {
+            copyMappedStringForCode(0x008Cu);
+        } else {
+            dispatchNotificationByCode(eventCode);
+        }
+        return 0;
+    }
+
+    // slotWord != 0 && != 1 => treat as callback pointer
+    g_notificationHandlerSlotWord[static_cast<u16>(slotIndex)] = 0;
+
+    const u16 handlerParam = static_cast<u16>(g_notificationHandlerParam[static_cast<u16>(slotIndex)]);
+
+    const auto handlerFn = reinterpret_cast<NotificationHandlerFn>(
+        static_cast<std::uintptr_t>(slotWord)
+    );
+
+    handlerFn(eventCode, handlerParam);
+    return 0;
+}
+
+i16 triggerNotification_0x0016()
+{
+    return handleNotificationOrCallbackByCode(0x0016u);
+}
+
+void configureFileMode() {
+    if (g_configureFileMode) g_configureFileMode();
+}
+
+void invokeExternalCallback()
+{
+    if (g_invokeExternalCallbackFn) {
+        g_invokeExternalCallbackFn();
+    }
+}
+
+void processCallbackQueueFromEngineEvent() {
+  // en ASM: processCallbackQueue(0x127C, 0x127C)
+  // ici: placeholders
+  processCallbackQueue(/*begin*/nullptr, /*end*/nullptr);
 }

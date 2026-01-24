@@ -7,12 +7,22 @@
 #include <vector>
 #include <filesystem>
 #include <string>
+#include <cstring>
 #include <system_error>
 #include <cstddef>
 #include <windows.h>
 #include <tuple>
 #include <stdexcept>
 #include "dialog.h"
+
+static char g_inputDialogLabel[0x80];   // at 0x2BE0 (size guessed)
+static char g_inputDialogText[0x80];    // at 0x2B90 (size guessed)
+static uint8_t g_userConfirmed;         // g_userConfirmed
+
+// Near pointers in original: offsets into DS
+static char* dsPtr(uint16_t off) { return reinterpret_cast<char*>(off); }
+
+HINSTANCE g_hInstance = nullptr;
 
 void showDialogBox(void) {
     // Simule une boîte où on demande à l'utilisateur de confirmer ou modifier la chaîne
@@ -26,6 +36,30 @@ void showDialogBox(void) {
     }
 
     strcpy(g_userConfirmed, g_dialogOutput);
+}
+
+int handleInputDialog(uint16_t inputLabelPtr, uint16_t outputBufferPtr) {
+    // Copy label -> global label buffer
+    std::strcpy(g_inputDialogLabel, dsPtr(inputLabelPtr));
+
+    // Copy existing text -> global edit buffer
+    std::strcpy(g_inputDialogText, dsPtr(outputBufferPtr));
+
+    // Show dialog (DLG_INP1) using DLG_INP1_FUNC
+    // (original uses MakeProcInstance / DialogBox / FreeProcInstance)
+    showDlgInp1Modal(); // wrapper around DialogBox
+
+    // Copy edited text back to caller buffer
+    std::strcpy(dsPtr(outputBufferPtr), g_inputDialogText);
+
+    // Return per g_userConfirmed
+    return (g_userConfirmed != 0) ? 0 : 2;
+}
+
+int handleInputDialog(uint16_t labelId, char* outputBuffer)
+{
+    const char* label = getUiStringById(labelId);
+    return handleInputDialog(label, outputBuffer);
 }
 
 int handleInputDialog(const char* labelInput, char* outputBuffer) {
@@ -84,32 +118,36 @@ INT_PTR CALLBACK DlgInputProc(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lParam
 }
 
 void releaseDialogResources() {
-    if (isWindowsResourceAllocated) {
-        ReleaseDC(g_windowHandle, g_deviceContext);
-        isWindowsResourceAllocated = false;
+    if (g_hasDeviceContext) {
+        ReleaseDC(g_hdc2, g_hwnd);
+        g_hasDeviceContext = false;
     }
 }
 
-void showFileMessage(const char* message) {
-    // Cherche le dernier backslash pour isoler le nom de fichier
-    const char* filename = strrchr(message, '\\');
-    if (filename) {
-        filename++;  // Avancer après le '\'
-    } else {
-        filename = message;  // Pas de répertoire dans la chaîne
-    }
+static const char* lookupString(uint16_t id)
+{
+    return g_stringTable[id];
+}
 
-    // Appel de MessageBoxA (version ANSI, compatible avec const char*)
+
+void showFileMessage(uint16_t messageId)
+{
+    const char* message = lookupString(messageId);
+    if (!message) message = "";
+
+    const char* filename = std::strrchr(message, '\\');
+    filename = filename ? (filename + 1) : message;
+
     MessageBoxA(GetDesktopWindow(), message, filename, MB_ICONINFORMATION | MB_OK);
 }
 
 void showFinalDialog() {
-    FARPROC dlgProc = MAKEPROCINSTANCE(DLG_OK_FUNC, hInstanceTmp);
+    FARPROC dlgProc = MAKEPROCINSTANCE(DLG_OK_FUNC, g_hInstance);
 
     DialogBox(
-        hInstanceTmp,
+        g_hInstance,
         "DLG_LAST",
-        reinterpret_cast<HWND>(g_deviceContext),  // ← probablement une erreur !
+        reinterpret_cast<HWND>(g_hwnd),  // ← probablement une erreur !
         reinterpret_cast<DLGPROC>(dlgProc)
     );
 
@@ -117,12 +155,12 @@ void showFinalDialog() {
 }
 
 void showLevelDoneDialog() {
-    FARPROC dlgProc = MAKEPROCINSTANCE(DLG_LVLDUN_FUNC, hInstanceTmp);
+    FARPROC dlgProc = MAKEPROCINSTANCE(DLG_LVLDUN_FUNC, g_hInstance);
 
     DialogBox(
-        hInstanceTmp,
+        g_hInstance,
         "DLG_DUN1",
-        reinterpret_cast<HWND>(g_deviceContext),  // ⚠️ attention ici aussi
+        reinterpret_cast<HWND>(g_hwnd),  // ⚠️ attention ici aussi
         reinterpret_cast<DLGPROC>(dlgProc)
     );
 
@@ -130,12 +168,12 @@ void showLevelDoneDialog() {
 }
 
 void showGameOverDialog() {
-    FARPROC dlgProc = MAKEPROCINSTANCE(DLG_KYESGONE_FUNC, hInstanceTmp);
+    FARPROC dlgProc = MAKEPROCINSTANCE(DLG_KYESGONE_FUNC, g_hInstance);
 
     DialogBox(
-        hInstanceTmp,
+        g_hInstance,
         "DLG_GON1",
-        reinterpret_cast<HWND>(g_deviceContext),  // ⚠️ encore douteux
+        reinterpret_cast<HWND>(g_hwnd),  // ⚠️ encore douteux
         reinterpret_cast<DLGPROC>(dlgProc)
     );
 
@@ -143,11 +181,27 @@ void showGameOverDialog() {
 }
 
 void showWhatDialog() {
-    FARPROC dlgProc = MAKEPROCINSTANCE(DLG_OK_FUNC, hInstanceTmp);
+    FARPROC dlgProc = MAKEPROCINSTANCE(DLG_OK_FUNC, g_hInstance);
 
     // Affiche une boîte de dialogue modale
-    DIALOGBOX(hInstanceTmp, "DLG_WHAT", g_deviceContext, dlgProc);
+    DIALOGBOX(g_hInstance, "DLG_WHAT", g_hwnd, dlgProc);
 
     // Libère la procédure une fois la boîte fermée
     FREEPROCINSTANCE(dlgProc);
+}
+
+
+
+const char* getUiStringById(uint16_t id)
+{
+    switch (id) {
+        case 0x88: return "MSG_0088";
+        case 0x91: return "MSG_0091";
+        case 0xC8: return "MSG_00C8";
+        case 0xE7: return "MSG_00E7";
+        case 0x385: return "MSG_0385";
+        case 0x386: return "MSG_0386";
+        case 0x38D: return "MSG_038D";
+        default:    return "";
+    }
 }

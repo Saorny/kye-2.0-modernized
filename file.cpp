@@ -23,6 +23,14 @@
 
 namespace fs = std::filesystem;
 
+static constexpr int kLines = 0x14;      // 20
+static constexpr int kLineSize = 0x23;   // 35 bytes
+
+int findMatchingLineInFile(const std::string& target)
+{
+    return findMatchingLineInFile(target.c_str());
+}
+
 int findMatchingLineInFile(const char* targetString) {
     if (fileAccessEnabled == 0)
         return -1;
@@ -63,10 +71,10 @@ int findMatchingLineInFile(const char* targetString) {
     return -1;
 }
 
-FileLike* openAndPrepareFileFromSlot(const char* filepath, const char* adviceType) {
+FileLike* openAndPrepareFileFromSlot(const char* filepath, const char* mode) {
     FileLike* slot = findFreeFileSlot();
     if (!slot) return nullptr;
-    return prepareAndOpenFile(slot, 0, adviceType, filepath);
+    return prepareAndOpenFile(slot, 0, mode, filepath);
 }
 
 FileLike* findFreeFileSlot() {
@@ -153,47 +161,6 @@ int countWrittenCharacters(const FileLike* file) {
         }
     }
     return count;
-}
-
-int resetAndSeekFile(FileLike *file, int mode) {
-    // Step 1: Flush le buffer texte si nécessaire
-    if (flushTextBuffer(file) != 0) {
-        return -1;
-    }
-
-    // Step 2: Si mode == 1 et que le buffer contient encore des données à écrire
-    if (mode == 1 && file->count > 0) {
-        int result = countWrittenCharacters(file);  // probablement écrit les données restantes
-        int32_t delta = result;       // valeur retournée qu’on soustrait
-
-        uint32_t offset = (uintptr_t)file >> 16;
-        uint16_t segment = (uintptr_t)file & 0xFFFF;
-
-        // simulate subtraction across segment:offset (emulée par deux mots séparés)
-        *((uint16_t*)(&file) + 1) -= (delta & 0xFFFF);
-        *((uint16_t*)(&mode))     -= (delta >> 16);
-    }
-
-    // Step 3: Nettoie certains flags et réinitialise les pointeurs
-    file->flags &= 0xFE5F;
-    file->count = 0;
-    file->bufferStart = file->buffer;
-
-    // Step 4: Déplacement du pointeur de fichier via moveFilePointerExtended
-    uint8_t fd = file->fd;
-    int16_t offsetLow = *((uint16_t*)(&file) + 1);
-    int16_t offsetHigh = *((uint16_t*)(&mode));
-    int16_t resultLow, resultHigh;
-
-    int res = moveFilePointerExtended((int8_t)fd, offsetHigh, offsetLow, mode);
-    resultLow = res & 0xFFFF;
-    resultHigh = (res >> 16) & 0xFFFF;
-
-    if (resultLow == -1 && resultHigh == -1) {
-        return -1;
-    }
-
-    return 0;
 }
 
 int validateFile(FileLike* file, int mode) {
@@ -340,62 +307,77 @@ void flushAllDirtyTextBuffers() {
 }
 
 int readCharFromTextBuffer(FileLike* file) {
-    if (!file) {
-        return -1;
+    if (!file) return kEOF;
+
+    // Fast path: il reste des chars en buffer
+    if (file->bytesRead > 0) {
+        file->bytesRead--;
+        const unsigned char ch = static_cast<unsigned char>(*file->bufferCursor);
+        file->bufferCursor++;
+        return static_cast<int>(ch);
     }
 
-    // Fast path: buffer has unread data
-    if (file->count > 0) {
-        file->count--;
-        char c = *file->bufferStart;
-        file->bufferStart++;
-        return static_cast<unsigned char>(c);
+    // Si bytesRead == 0 : pas de données en buffer
+    // Si bytesRead < 0 ou conditions/flags => erreur/EOF
+    if (file->bytesRead < 0) {
+        file->flags |= kFlagErrorOrEOF;
+        return kEOF;
     }
 
-    // EOF or error or need refill
-    if (file->count < 0 || (file->flags & 0x110) || !(file->flags & 0x01)) {
-        file->flags |= 0x10; // Set error/EOF flag
-        return -1;
+    // Si flags 0x110 set OU pas read-enabled, etc. => fail
+    if ((file->flags & kFlagNoRefillMask) != 0 ||
+        (file->flags & kFlagReadEnabled) == 0) {
+        file->flags |= kFlagErrorOrEOF;
+        return kEOF;
     }
 
-    // Mark as dirty if needed
-    file->flags |= 0x80;
-
+    // Mode "buffered": si bufferSize != 0, on tente de remplir et relire
     if (file->bufferSize != 0) {
+        file->flags |= kFlagBufferedActive;
         if (fillTextBuffer(file) == 0) {
-            // refill successful, try again
+            // refill ok => relire (retombe sur fast path logique asm)
+            file->bytesRead--;
+            const unsigned char ch = static_cast<unsigned char>(*file->bufferCursor);
+            file->bufferCursor++;
+            return static_cast<int>(ch);
+        }
+        return kEOF;
+    }
+
+    // Mode "unbuffered": lecture 1 byte dans un buffer global (asm: 0x2EE0)
+    if (file->flags & kFlagDirtyAutoFlush) {
+        flushAllDirtyTextBuffers();
+    }
+
+    char one = 0;
+    const int n = readTextBuffer(static_cast<int>(file->fd), &one, 1);
+    if (n == 0) {
+        // asm: si read==0 => moveFilePointer(fd) puis check ax==1 sinon error
+        const int ok = moveFilePointer(static_cast<int>(file->fd));
+        if (ok == 1) {
+            uint16_t f = file->flags;
+            f = static_cast<uint16_t>((f & kFlagClearMask_FE7F) | kFlagSomeMode20);
+            file->flags = f;
+        } else {
+            file->flags |= kFlagErrorOrEOF;
+        }
+        return kEOF;
+    }
+
+    // n != 0 : un char dispo (asm: g_pendingChar, CR/LF handling)
+    g_pendingChar = static_cast<int16_t>(static_cast<unsigned char>(one));
+
+    if (g_pendingChar == 0x0D) { // '\r'
+        // asm: si pas flag 0x40 => boucle vers lecture brute (loc_6F8E)
+        if ((file->flags & kFlagLineMode) == 0) {
+            // relire un nouveau char (comportement identique au saut asm)
             return readCharFromTextBuffer(file);
-        } else {
-            return -1;
-        }
-    } else {
-        // No buffer: must read one char into a temporary buffer
-        if (file->flags & 0x200) {
-            flushAllDirtyTextBuffers();
-        }
-
-        char tmpBuf;
-        int result = readTextBuffer(file->fd, &tmpBuf, 1);
-
-        if (result != 0) {
-            // Maybe CRLF translation
-            if (g_pendingChar == '\r' && !(file->flags & 0x40)) {
-                return readCharFromTextBuffer(file);
-            }
-            file->flags &= ~0x20;
-            return static_cast<unsigned char>(g_pendingChar);
-        } else {
-            if (moveFilePointer(file->fd) == 1) {
-                file->flags &= ~0x180;
-                file->flags |= 0x20;
-            } else {
-                file->flags |= 0x10; // set error flag
-            }
-            return -1;
         }
     }
-}
 
+    file->flags = static_cast<uint16_t>(file->flags & ~kFlagErrorOrEOF);
+    return static_cast<int>(static_cast<unsigned char>(g_pendingChar));
+}
 
 int fillTextBuffer(FileLike* file) {
     if (file->flags & 0x0200) {
@@ -476,52 +458,50 @@ int flushAllTextBuffers() {
     return flushedCount;
 }
 
-int flushTextBuffer(FileLike* file) {
+static int flushTextBuffer(FileLike* file) {
     if (!file) {
-        flushAllTextBuffers();  // cas particulier : flush global
+        flushAllTextBuffers();
         return 0;
     }
 
-    // vérifie si le pointeur du buffer est correct
-    if (file->bufferStart != reinterpret_cast<char*>(file)) {
+    if (file->self != file) {
         return -1;
     }
 
-    // Si des données ont été lues dans le tampon
-    if (file->count >= 0) {
-        if (!(file->flags & 0x0008)) {  // pas un fichier ouvert en écriture ?
-            char* expectedPtr = reinterpret_cast<char*>(file) + 5;
-            if (file->bufferStart != expectedPtr) {
+    const char* inlinePos = reinterpret_cast<const char*>(file) + 5;
+
+    if (file->bytesRead >= 0) {
+        if ((file->flags & 0x0008u) == 0u) {
+            if (file->bufferCursor != const_cast<char*>(inlinePos)) {
                 return 0;
             }
         }
-        file->count = 0;
 
-        char* expectedPtr = reinterpret_cast<char*>(file) + 5;
-        if (file->bufferStart != expectedPtr) {
+        file->bytesRead = 0;
+
+        if (file->bufferCursor == const_cast<char*>(inlinePos)) {
             return 0;
         }
 
-        file->bufferStart = file->buffer;
+        file->bufferCursor = file->buffer;
         return 0;
     }
 
-    // On va devoir écrire
-    int size = file->bufferSize + file->count + 1;
-    file->count -= size;
-    file->bufferStart = file->buffer;
+    const int size = static_cast<int>(static_cast<int32_t>(file->bufferSize) + file->bytesRead + 1);
 
-    int written = writeTextBuffer(file->fd, file->buffer, size);
+    file->bytesRead = static_cast<int16_t>(file->bytesRead - static_cast<int16_t>(size));
+    file->bufferCursor = file->buffer;
 
-    if (written == size) {
-        return 0;
+    const int written = writeTextBuffer(file->fd, file->buffer, size);
+
+    if (written != size) {
+        if ((file->flags & 0x0200u) == 0u) {
+            file->flags = static_cast<uint16_t>(file->flags | 0x0010u);
+            return -1;
+        }
     }
 
-    if (!(file->flags & 0x0200)) {
-        file->flags |= 0x0010; // erreur
-    }
-
-    return -1;
+    return 0;
 }
 
 int readTextBuffer(int fd, char* buffer, int size) {
@@ -1044,11 +1024,6 @@ uint16_t writeStringAndAdvance(char* dest, const char* src) {
     return reinterpret_cast<uint16_t>(dest + len);        // adresse après la chaîne
 }
 
-uint16_t copyMemory(char* dest, const char* src, uint16_t size) {
-    std::memcpy(dest, src, size);  // std::memcpy est safe et optimisé
-    return reinterpret_cast<uint16_t>(dest);  // retour identique à l'asm
-}
-
 void copySecondStringIntoFirst(char* dest, const char* src) {
     size_t len = std::strlen(src);
     std::memmove(dest, src, len + 1);
@@ -1334,51 +1309,107 @@ void generateMappedLine(uint16_t index, uint8_t* outputBuffer) {
 }
 
 void generateFileFromMappedData() {
-    // Tables simulant les segments mémoire d'origine
-    extern uint8_t mappedTable1[0x100];
-    extern uint8_t mappedTable2[0x100];
-    extern uint8_t mappedTable3[0x100];
-    extern uint8_t fileHeader[2];  // = {0x00, 0x00}; ← simulant les 2 octets à 0x48F
+    // Local copies (exact sizes not shown in snippet)
+    char nameCopy[0x100];
+    char otherCopy[0x100];
+    char hintCopy[0x200];
 
-    uint8_t outputBuffer[0x23 * 0x14 + 1] = {0}; // 20 lignes * 35 caractères + null-terminator
+    std::strcpy(nameCopy,  g_levelName);
+    std::strcpy(otherCopy, g_secondaryText);
+    std::strcpy(hintCopy,  g_hintText);
 
-    // Génère 20 lignes de données mappées
-    for (int i = 0; i < 20; ++i) {
-        generateMappedLine(i, outputBuffer + i * 0x23);
+    // Build mapped lines buffer (20 * 0x23)
+    std::array<char, kLines * kLineSize> mapped{};
+    for (int i = 0; i < kLines; i++) {
+        generateMappedLine(&mapped[i * kLineSize], i);
     }
 
-    // Ouvre le fichier
-    FileLike* file = openAndPrepareFileFromSlot("kye_map.txt", "adviceType");
+    // Open target file (slot/path)
+    auto file = openAndPrepareFileFromSlot(/*adviceType*/0x48D, /*path*/g_selectedFilePath);
     if (!file) {
-        showMessage("Error", "Cannot open file");
+        showMessage(/*caption*/0x491, g_selectedFilePath);
         resetLevelStateMemory();
-        fileAccessEnabled = false;
+        fileAccessEnabled = 0;
         return;
     }
 
-    // Seek début
-    resetAndSeekFile(file, 0);
-
-    // Écriture de l'en-tête
-    if (!writeLineToFile(reinterpret_cast<const char*>(fileHeader), file)) {
-        showMessage("Error", "Cannot write header");
+    if (!resetAndSeekFile(file, /*mode*/0)) {
+        showMessage(/*caption*/0x4A4, g_selectedFilePath);
         resetLevelStateMemory();
-        fileAccessEnabled = false;
+        fileAccessEnabled = 0;
         return;
     }
 
-    // Écriture de toutes les lignes mappées
-    if (!writeMultiLineData(reinterpret_cast<const char*>(mappedTable1), file)) {
-        showMessage("Error", "Cannot write table1");
+    // Header line from string id 0x48F (probablement une signature/version)
+    if (!writeLineToFile(file, getStringById(0x48F))) {
+        showMessage(/*caption*/0x4A4, g_selectedFilePath);
         resetLevelStateMemory();
-        fileAccessEnabled = false;
+        fileAccessEnabled = 0;
         return;
     }
 
-    // Optionnel : écrire table2, table3 ?
-    // writeMultiLineData(reinterpret_cast<const char*>(mappedTable2), file);
-    // writeMultiLineData(reinterpret_cast<const char*>(mappedTable3), file);
+    // Write full content (name/hint + mapped lines, etc.)
+    if (!writeMultiLineData(file, nameCopy /*points to a structure of blocks in original*/)) {
+        showMessage(/*caption*/0x4A4, g_selectedFilePath);
+        resetLevelStateMemory();
+        fileAccessEnabled = 0;
+        return;
+    }
 
-    // Ferme et nettoie
     cleanFile(file);
+}
+
+static int16_t computeTextSeekAdjustment(const FileLike& file) {
+    int16_t diVal = 0;
+
+    if (file.bytesRead < 0) {
+        int16_t dx = static_cast<int16_t>(static_cast<int32_t>(file.bufferSize) + file.bytesRead + 1);
+        diVal = dx;
+    } else {
+        diVal = static_cast<int16_t>(std::abs(file.bytesRead));
+    }
+    if ((file.flags & 0x0040u) != 0) {
+        return diVal;
+    }
+
+    const int16_t count = static_cast<int16_t>(std::abs(file.bytesRead));
+    if (count == 0) return diVal;
+
+    if (file.bytesRead < 0) {
+        const char* p = file.bufferCursor;
+        for (int16_t i = 0; i < count; ++i) {
+            --p;
+            if (*p == '\n') {
+                ++diVal;
+            }
+        }
+    } else {
+        const char* p = file.bufferCursor;
+        for (int16_t i = 0; i < count; ++i) {
+            if (*p == '\n') {
+                ++diVal;
+            }
+            ++p;
+        }
+    }
+
+    return diVal;
+}
+
+
+static int resetAndSeekFile(FileLike& file, int32_t offset, int origin) {
+    if (flushTextBuffer(&file) != 0) {
+        return -1;
+    }
+
+    if (origin == 1 && file.bytesRead > 0) {
+        offset -= static_cast<int32_t>(computeTextSeekAdjustment(file));
+    }
+
+    file.flags = static_cast<uint16_t>(file.flags & 0xFE5Fu);
+    file.bytesRead = 0;
+    file.bufferCursor = file.buffer;
+
+    const int rc = moveFilePointerExtended(static_cast<int>(file.fd), offset, origin);
+    return (rc == -1) ? -1 : 0;
 }

@@ -63,10 +63,10 @@ const char* getEnvVar(const char* key) {
     char keyFirst = *key;
     size_t keyLen = std::strlen(key);
 
-    if (!environmentList)
+    if (!g_environmentStringPtrs)
         return nullptr;
 
-    for (char** entry = environmentList; *entry; ++entry) {
+    for (char** entry = g_environmentStringPtrs; *entry; ++entry) {
         const char* envEntry = *entry;
         if (!envEntry || *envEntry == '\0')
             continue;
@@ -296,3 +296,137 @@ bool flushBuffer(uint8_t* bufferStart, uint8_t*& writePtr, int& bufferRemaining,
     return !flushFailed;
 }
 
+static inline std::uint16_t divide64_unsigned(std::uint64_t value)
+{
+    return static_cast<std::uint16_t>(value / 0x8000ull);
+}
+
+static int cStringLen(const char* s)
+{
+    int n = 0;
+    while (s && s[n] != '\0') ++n;
+    return n;
+}
+
+static inline u8 divmodSigned_u8(i64 numer, i64 denom, i64& outQuot)
+{
+    // x86 idiv: quotient trunc toward 0, remainder same sign as numer
+    const i64 q = (denom != 0) ? (numer / denom) : 0;
+    const i64 r = (denom != 0) ? (numer % denom) : 0;
+    outQuot = q;
+    return static_cast<u8>(r & 0xFF);
+}
+
+static inline u8 divmodUnsigned_u8(u64 numer, u64 denom, u64& outQuot)
+{
+    const u64 q = (denom != 0) ? (numer / denom) : 0;
+    const u64 r = (denom != 0) ? (numer % denom) : 0;
+    outQuot = q;
+    return static_cast<u8>(r & 0xFF);
+}
+
+static inline bool geUnsigned64(u64 a, u64 b) { return a >= b; }
+
+static void copySuffixFromFirstDotIfNoWildcards(char* dst, const char* src)
+{
+    if (!dst || !src) return;
+
+    // 1) trouver le premier '.'
+    const char* dot = src;
+    while (*dot != '\0' && *dot != '.') {
+        ++dot;
+    }
+    if (*dot == '\0') {
+        return; // pas de '.'
+    }
+
+    // 2) refuser si wildcard dans le suffixe
+    if (std::strchr(dot, '*') != nullptr) return;
+    if (std::strchr(dot, '?') != nullptr) return;
+
+    // 3) copier le suffixe (inclut '.' et '\0')
+    std::strcpy(dst, dot);
+}
+
+static void splitPathDirAndName(char* dirOut, char* nameOut, const char* fullPath)
+{
+    if (!dirOut || !nameOut) return;
+    if (!fullPath) {
+        dirOut[0] = '\0';
+        nameOut[0] = '\0';
+        return;
+    }
+
+    const std::size_t len = std::strlen(fullPath);
+    const char* begin = fullPath;
+    const char* p = fullPath + len; // pointe sur '\0'
+
+    // Scan arrière pour trouver ':' ou '\\'
+    // (ASM utilise ANSIPREV pour DBCS; ici version simple 1-byte)
+    while (p > begin) {
+        --p;
+        if (*p == ':' || *p == '\\') break;
+    }
+
+    // Si rien trouvé
+    if (!(p >= begin && (*p == ':' || *p == '\\'))) {
+        std::strcpy(nameOut, fullPath);
+        dirOut[0] = '\0';
+        return;
+    }
+
+    // nameOut = après séparateur
+    std::strcpy(nameOut, p + 1);
+
+    // dirOut = fullPath tronqué juste après le séparateur
+    const std::size_t cut = static_cast<std::size_t>((p - begin) + 1);
+
+    // Copie entière puis tronque (comme l'ASM)
+    std::strcpy(dirOut, fullPath);
+    dirOut[cut] = '\0';
+}
+
+static void appendDefaultExtensionIfMissing(char* filenameBuf, const char* defaultExt)
+{
+    if (!filenameBuf || !defaultExt) return;
+
+    // 1) Cherche un '.' dans le nom
+    for (char* p = filenameBuf; *p != '\0'; ++p) {
+        if (*p == '.') {
+            return; // extension déjà présente -> no-op
+        }
+    }
+
+    // 2) Pas de '.' => concatène defaultExt à la fin
+    std::strcat(filenameBuf, defaultExt);
+}
+
+static bool containsWildcard(std::string_view s) {
+    return s.find('*') != std::string_view::npos || s.find('?') != std::string_view::npos;
+}
+
+static void ensureDefaultMask(OpenDialogState& st) {
+    st.selectedMask = "*.kye";
+}
+
+static void appendDefaultExtensionIfMissing(std::string& filename, std::string_view defaultExt) {
+    if (filename.find('.') != std::string::npos) return;
+    if (!defaultExt.empty() && defaultExt[0] != '.') {
+        filename.push_back('.');
+    }
+    filename.append(defaultExt);
+}
+
+static std::string joinPath(std::string_view dir, std::string_view name) {
+    if (dir.empty()) return std::string(name);
+    std::string out(dir);
+    if (out.back() != '\\' && out.back() != '/') out.push_back('\\');
+    out.append(name);
+    return out;
+}
+static void copyMemory(uint16_t dstOff, uint16_t srcOff, int sizeBytes) {
+    uint8_t* dst = getPointerFromSegmentOffset(/*ds*/0, dstOff);
+    uint8_t* src = getPointerFromSegmentOffset(/*ds*/0, srcOff);
+    if (!dst || !src || sizeBytes <= 0) return;
+    std::memmove(dst, src, (size_t)sizeBytes);
+}

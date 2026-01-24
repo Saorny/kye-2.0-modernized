@@ -33,6 +33,19 @@ enum class IoctlResult {
     Error
 };
 
+struct DateParts {
+    int year;   // ex: 2026
+    int month;  // 1..12
+    int day;    // 1..31
+};
+
+struct TimeParts {
+    int hour;        // 0..23
+    int minute;      // 0..59
+    int second;      // 0..59
+    int centisecond; // 0..99 (optionnel, mais fréquent côté DOS)
+};
+
 extern std::unordered_map<int, bool> g_isDeviceHandle;
 bool getAdviceInfo(int fd);
 
@@ -40,5 +53,6 @@ int ioctl(int fd, uint8_t subfunction, uint16_t dxValue, uint16_t cxValue);
 void getCurrentDate(uint16_t* out);
 void getCurrentTime(uint16_t* out);
 void seedGameRNG(uint16_t seed);
+uint32_t computeTimestampNow(uint32_t* outTimestamp);
 
 #endif // TIME_H

@@ -16,16 +16,16 @@
 #define fdFlags ((uint16_t*)0x0FB8)
 
 struct FileLike {
-    uint16_t count;      // 0x00
-    uint16_t  flags;          // 0x02
-    uint8_t  fd;             // 0x04
-    uint8_t  pad;            // 0x05
-    uint16_t bufferSize;     // 0x06
-    char    *buffer;         // 0x08
-    char    *bufferStart;    // 0x0A
-    // Total size = 0x10
+    int16_t   bytesRead;     // 0x00
+    uint16_t  flags;         // 0x02
+    uint8_t   fd;            // 0x04
+    uint8_t   pad;           // 0x05
+    uint16_t  bufferSize;    // 0x06
+    char*     buffer;        // 0x08
+    char*     bufferCursor;  // 0x0A
+    uint16_t  _pad0C;        // 0x0C (inconnu / align)
+    FileLike* self;          // 0x0E  <-- REQUIRED by asm
 };
-
 struct OpenFileEntry {
     FILE* handle;
     uint16_t flags;
@@ -70,13 +70,26 @@ int cleanFile(FileLike* file);
 int readStructuredBlock(FileLike* file, char* outBuf);
 int readLineToBuffer(FileLike *file, char *outBuf, int maxLen);
 int resetAndSeekFile(FileLike *file, int mode);
-FileLike* openAndPrepareFileFromSlot(const char* filepath, const char* adviceType);
+void generateFileFromMappedData();
+int findMatchingLineInFile(const std::string& target);
+FileLike* openAndPrepareFileFromSlot(const char* filepath, const char* mode);
 
 struct SegmentOffsetEntry {
     uint16_t segment;
     uint16_t offset;
     uint8_t value;
 };
+
+static constexpr int kEOF = -1;
+
+static constexpr uint16_t kFlagReadEnabled     = 0x0001;
+static constexpr uint16_t kFlagErrorOrEOF      = 0x0010;
+static constexpr uint16_t kFlagLineMode        = 0x0040;  // influence CR handling (test 0x40)
+static constexpr uint16_t kFlagBufferedActive  = 0x0080;  // set avant fillTextBuffer
+static constexpr uint16_t kFlagNoRefillMask    = 0x0110;  // test 0x110 (bloque refill)
+static constexpr uint16_t kFlagDirtyAutoFlush  = 0x0200;  // si set => flushAllDirtyTextBuffers()
+static constexpr uint16_t kFlagSomeMode20      = 0x0020;  // set sur un cas moveFilePointer==1
+static constexpr uint16_t kFlagClearMask_FE7F  = 0xFE7F;  // and, puis or 0x20
 
 SegmentOffsetEntry mappedTable[64];
 
