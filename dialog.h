@@ -1,6 +1,7 @@
 #ifndef DIALOG_H
 #define DIALOG_H
 
+#include <SDL3/SDL.h>
 
 #define ID_INPUT_FIELD  0x67
 #define ID_LABEL_FIELD  0x66

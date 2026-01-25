@@ -408,7 +408,7 @@ void *alloca(size_t);
 #if defined(INT64_C)
 #define SDL_SINT64_C(c)  INT64_C(c)
 #elif defined(_MSC_VER)
-#define SDL_SINT64_C(c)  c ## i64
+#define SDL_SINT64_C(c)  c ## int64_t
 #elif defined(__LP64__) || defined(_LP64)
 #define SDL_SINT64_C(c)  c ## L
 #else

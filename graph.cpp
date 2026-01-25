@@ -163,7 +163,7 @@ void initializeWindowSize() {
     const char* titlePrefix = getLegacyString(0x0444);
     appendBytes(windowTitle, sizeof(windowTitle), titlePrefix, 4);
 
-    const char* base = getLegacyString(0x01A0);
+    const char* base = getLegacyString(g_selectedFilePath);
     if (base && base[0] != '\0') {
         const char* titleMid5 = getLegacyString(0x0448);
         appendBytes(windowTitle, sizeof(windowTitle), titleMid5, 5);
@@ -254,17 +254,17 @@ static int initializeGameWindow(
     resetLevelStateMemory();
 
     if (!isDiggerKeyword(windowTitle)) {
-        copyMemory(0x01A0, 0x0186, 10);
-        loadLevelByIndex(levelIndex);
-        clearStatusLine(0x29FA);
+        copyMemory(g_selectedFilePath, borderTitle, 10);
+        loadLevelByIndex(g_levelIndex);
+        clearStatusLine(g_statusLineBuffer);
         updateNextLevelMenuItem();
         matchedEntryCount = 0;
         showWhatDialog();
     }
 
-    copyMemory(0x01A0, 0x0191, 12);
-    loadLevelByIndex(levelIndex);
-    clearStatusLine(0x29FA);
+    copyMemory(g_selectedFilePath, defaultKyeTitle, 12);
+    loadLevelByIndex(g_levelIndex);
+    clearStatusLine(g_statusLineBuffer);
     updateNextLevelMenuItem();
     matchedEntryCount = 0;
 
@@ -820,4 +820,16 @@ void initTickCounter()
 
     g_biosTickCountLo = static_cast<uint16_t>(t & 0xFFFFu);
     g_biosTickCountHi = static_cast<uint16_t>((t >> 16) & 0xFFFFu);
+}
+
+void drawWhatDialogUI()
+{
+    SDL_Rect box { 200, 150, 400, 200 };
+    SDL_SetRenderDrawColor(g_renderer, 200, 200, 200, 255);
+    SDL_RenderFillRect(g_renderer, &box);
+
+    SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
+    SDL_RenderRect(g_renderer, &box);
+
+    // Texte à ajouter plus tard
 }

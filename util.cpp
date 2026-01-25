@@ -177,11 +177,11 @@ std::pair<uint16_t, uint16_t> divide64(
     uint16_t den_lo, uint16_t den_hi,
     uint16_t flags
 ) {
-    using u64 = uint64_t;
-    using i64 = int64_t;
+    using uint64_t = uint64_t;
+    using int64_t = int64_t;
 
-    u64 numerator = (static_cast<u64>(num_hi) << 16) | num_lo;
-    u64 denominator = (static_cast<u64>(den_hi) << 16) | den_lo;
+    uint64_t numerator = (static_cast<uint64_t>(num_hi) << 16) | num_lo;
+    uint64_t denominator = (static_cast<uint64_t>(den_hi) << 16) | den_lo;
 
     bool isSigned       = flags & 0x1;
     bool returnRemainder = flags & 0x2;
@@ -190,10 +190,10 @@ std::pair<uint16_t, uint16_t> divide64(
     if (denominator == 0)
         throw std::runtime_error("Divide by zero");
 
-    i64 result = 0;
+    int64_t result = 0;
     if (isSigned) {
-        auto snum = static_cast<i64>(static_cast<int32_t>(numerator));
-        auto sden = static_cast<i64>(static_cast<int32_t>(denominator));
+        auto snum = static_cast<int64_t>(static_cast<int32_t>(numerator));
+        auto sden = static_cast<int64_t>(static_cast<int32_t>(denominator));
         result = returnRemainder ? (snum % sden) : (snum / sden);
     } else {
         result = returnRemainder ? (numerator % denominator) : (numerator / denominator);
@@ -308,24 +308,24 @@ static int cStringLen(const char* s)
     return n;
 }
 
-static inline u8 divmodSigned_u8(i64 numer, i64 denom, i64& outQuot)
+static inline uint8_t divmodSigned_u8(int64_t numer, int64_t denom, int64_t& outQuot)
 {
     // x86 idiv: quotient trunc toward 0, remainder same sign as numer
-    const i64 q = (denom != 0) ? (numer / denom) : 0;
-    const i64 r = (denom != 0) ? (numer % denom) : 0;
+    const int64_t q = (denom != 0) ? (numer / denom) : 0;
+    const int64_t r = (denom != 0) ? (numer % denom) : 0;
     outQuot = q;
-    return static_cast<u8>(r & 0xFF);
+    return static_cast<uint8_t>(r & 0xFF);
 }
 
-static inline u8 divmodUnsigned_u8(u64 numer, u64 denom, u64& outQuot)
+static inline uint8_t divmodUnsigned_u8(uint64_t numer, uint64_t denom, uint64_t& outQuot)
 {
-    const u64 q = (denom != 0) ? (numer / denom) : 0;
-    const u64 r = (denom != 0) ? (numer % denom) : 0;
+    const uint64_t q = (denom != 0) ? (numer / denom) : 0;
+    const uint64_t r = (denom != 0) ? (numer % denom) : 0;
     outQuot = q;
-    return static_cast<u8>(r & 0xFF);
+    return static_cast<uint8_t>(r & 0xFF);
 }
 
-static inline bool geUnsigned64(u64 a, u64 b) { return a >= b; }
+static inline bool geUnsigned64(uint64_t a, uint64_t b) { return a >= b; }
 
 static void copySuffixFromFirstDotIfNoWildcards(char* dst, const char* src)
 {
@@ -424,9 +424,13 @@ static std::string joinPath(std::string_view dir, std::string_view name) {
     out.append(name);
     return out;
 }
-static void copyMemory(uint16_t dstOff, uint16_t srcOff, int sizeBytes) {
-    uint8_t* dst = getPointerFromSegmentOffset(/*ds*/0, dstOff);
-    uint8_t* src = getPointerFromSegmentOffset(/*ds*/0, srcOff);
-    if (!dst || !src || sizeBytes <= 0) return;
-    std::memmove(dst, src, (size_t)sizeBytes);
+
+char* copyMemory(char* dest, const char* src, uint16_t size)
+{
+    if (!dest || !src || size == 0) {
+        return dest;
+    }
+
+    std::memcpy(dest, src, static_cast<size_t>(size));
+    return dest;
 }

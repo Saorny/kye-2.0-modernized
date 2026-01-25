@@ -82,8 +82,11 @@ extern const char aBlock[];    // "block"
 extern const char aWall[];     // "wall"
 
 extern char stringBuffer[];
-extern u16 stringBufferCapacity;
+extern uint16_t stringBufferCapacity;
 extern bool g_needsRedraw;
+
+const char borderTitle[255];
+const char defaultKyeTitle[255];
 
 void drawRectangle(i16 left, i16 top, i16 right, i16 bottom);
 void drawTextAt(i16 x, i16 y, const char* text, int length);
@@ -100,5 +103,6 @@ static int initializeGameWindow(
     int skipRegisterClassFlag,
     void* hInstance
 );
+void drawWhatDialogUI();
 
 #endif // GRAPH_H

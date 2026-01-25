@@ -28,7 +28,6 @@ constexpr uint8_t STATUS_USED = 0xFF;
 
 int levelIndex = 1;
 int levelCount = 1;
-int matchedEntryCount = 0;
 int g_hasPendingModal = 0;
 bool hasLevelList = false;
 int remainingLives = 3;
@@ -45,8 +44,8 @@ uint16_t exitCoordRight = 0xFFF9;
 uint16_t exitState = 0xFFFB;
 HCURSOR g_mainCursor = nullptr;
 extern SpawnerSoA g_spawners;
-extern u16 g_notificationHandlerSlotWord[]; // 0,1, or legacy function pointer value
-extern u8  g_notificationHandlerParam[];    // per-slot byte parameter
+extern uint16_t g_notificationHandlerSlotWord[]; // 0,1, or legacy function pointer value
+extern uint8_t  g_notificationHandlerParam[];    // per-slot byte parameter
 
 HBRUSH brush_black = nullptr;
 HBRUSH brush_white = nullptr;
@@ -62,7 +61,7 @@ HBITMAP bitmap_kye   = nullptr;
 HBITMAP bitmap_block = nullptr;
 HBITMAP bitmap_wall  = nullptr;
 
-using NotificationHandlerFn = void (*)(u16 eventCode, u16 handlerParam);
+using NotificationHandlerFn = void (*)(uint16_t eventCode, uint16_t handlerParam);
 extern uintptr_t g_handlerOrStateTable[];   // base == 0x1122 (en words dans le binaire)
 extern uint8_t  g_handlerParamTable[];     // base == 0x1134 (byte par index)
 
@@ -83,8 +82,7 @@ static bool g_isRendering = false;
 
 inline char g_levelFilePath[MAX_PATH]{};
 char displayTextBuffer[512]    = {};
-char g_levelName[512]          = {};
-char g_levelHint[512]          = {};
+char g_levelHintTextBuffer[512]          = {};
 
 extern std::string g_levelRawText;
 extern std::string g_levelHintText;
@@ -106,7 +104,6 @@ HWND g_hdc2  = nullptr;
 std::string g_nameInputBuffer;
 
 std::string g_statusLineText;
-std::string g_hintText;
 
 static bool g_running = true;
 static bool g_keyDownFlag = false;
@@ -425,9 +422,9 @@ int loadLevelByIndex(int level)
         return 0;
     }
 
-    FileLike* file = openAndPrepareFileFromSlot(filepath, "r");
+    FileLike* file = openAndPrepareFileFromSlot(g_selectedFilePath, "r");
     if (!file) {
-        showMessage(filepath, "Cannot open file: ");
+        showMessage(g_selectedFilePath, "Cannot open file: ");
         resetLevelStateMemory();
         fileAccessEnabled = false;
         return;
@@ -2482,7 +2479,7 @@ APPLY_AND_MOVE:
 
 static inline i16 tileRandomCoord16()
 {
-  const u16 r = pseudoRandomUpdate();
+  const uint16_t r = pseudoRandomUpdate();
   return static_cast<i16>((r >> 11) & 0x000F);
 }
 
@@ -2744,9 +2741,9 @@ void handleStandardCellClick(i16 row, i16 col)
     if (row < 0 || row >= GameState::GRID_ROWS || col < 0 || col >= GameState::GRID_COLS) {
         return;
     }
-    const u16 cellValue      = gameGrid[row][col];
+    const uint16_t cellValue      = gameGrid[row][col];
     const i16 signedValue    = static_cast<i16>(cellValue); // pour le test > 0
-    const u16 originalValue  = cellValue;                   // on garde la valeur avant modification
+    const uint16_t originalValue  = cellValue;                   // on garde la valeur avant modification
 
     if (signedValue > 0) {
         markEntryInactive(signedValue);
@@ -2796,7 +2793,7 @@ void executeCurrentEntryAction(i16 actionType,
     case 1:
         // ASM : écrit tileId dans la grille si la position est valide
         if (!invalidPos) {
-            gameGrid[row][col] = static_cast<u16>(tileId);
+            gameGrid[row][col] = static_cast<uint16_t>(tileId);
         }
         break;
 
@@ -2810,7 +2807,7 @@ void executeCurrentEntryAction(i16 actionType,
     case 3:
         // ASM : pose un sentinel (0xFFFE), stocke srcRow/srcCol, puis handleSpecialSentinelClick
         if (!invalidPos) {
-            gameGrid[row][col] = static_cast<u16>(CELL_FLAG_SENTINEL);
+            gameGrid[row][col] = static_cast<uint16_t>(CELL_FLAG_SENTINEL);
             srcRow = row;
             srcCol = col;
             handleSpecialSentinelClick();
@@ -2853,7 +2850,7 @@ void updateGridCell(i16 row, i16 col)
             tempDc,
             0,
             0,
-            static_cast<u32>(SRCCOPY) 
+            static_cast<uint32_t>(SRCCOPY) 
         );
     }
     else if (cellValue == CELL_FLAG_EMPTY) {
@@ -2883,7 +2880,7 @@ void renderWallTile(i16 row, i16 col, LegacyGfxBackend::DcHandle srcDc)
     i16 srcX = 0;
     constexpr i16 srcY = 0;
     constexpr i16 tileSize = 0x10;
-    constexpr u32 ROP_SRCCOPY = 0x00CC0020; 
+    constexpr uint32_t ROP_SRCCOPY = 0x00CC0020; 
 
     if (rawValue <= static_cast<i16>(0xFFFD) &&
         rawValue >= static_cast<i16>(0xFFF5))
@@ -3041,7 +3038,7 @@ static bool handleMainMenuCommand(uint32_t wParamPacked /*, HWND hwnd */) {
             levelIndex = 1;
             loadLevelByIndex(1);
             matchedEntryCount = 0;
-            clearStatusLine(g_hintText); // 0x29FA
+            clearStatusLine(g_statusLineTextBuffer);
             invalidateAndRedrawMainWindow();
             return true;
         }
@@ -3049,7 +3046,7 @@ static bool handleMainMenuCommand(uint32_t wParamPacked /*, HWND hwnd */) {
         case 0x00C9: { // Restart (or abort edit)
             if (g_interactionMode == InteractionMode::Run) {
                 loadLevelByIndex(levelIndex);
-                clearStatusLine(g_hintText);
+                clearStatusLine(g_statusLineTextBuffer);
                 matchedEntryCount = 0;
                 invalidateAndRedrawMainWindow();
                 return true;
@@ -3061,7 +3058,7 @@ static bool handleMainMenuCommand(uint32_t wParamPacked /*, HWND hwnd */) {
             restoreRunModeMenus();
             enableMenuItemRestartFromLevel1(false); // id 0x65
             loadLevelByIndex(levelIndex);
-            clearStatusLine(g_hintText);
+            clearStatusLine(g_statusLineTextBuffer);
             matchedEntryCount = 0;
             g_timerActive = true;
             invalidateAndRedrawMainWindow();
@@ -3083,7 +3080,7 @@ static bool handleMainMenuCommand(uint32_t wParamPacked /*, HWND hwnd */) {
                     levelIndex = match;
                     loadLevelByIndex(levelIndex);
                     matchedEntryCount = 0;
-                    clearStatusLine(g_hintText);
+                    clearStatusLine(g_statusLineTextBuffer);
                     invalidateAndRedrawMainWindow();
                 } else if (!isEmptyString(g_nameInputBuffer)) {
                     showMessage(/*caption*/0x88, /*text*/0x91);
@@ -3095,10 +3092,10 @@ static bool handleMainMenuCommand(uint32_t wParamPacked /*, HWND hwnd */) {
 
             // Edit hint
             char tempText[0x50];
-            copyString(tempText, g_hintText);
+            copyString(tempText, g_statusLineTextBuffer);
             if (handleInputDialog(tempText, /*label*/0x9F) != 0) return true; // canceled
-            copyString(g_hintText, tempText);
-            clearStatusLine(g_hintText);
+            copyString(g_statusLineTextBuffer, tempText);
+            clearStatusLine(g_statusLineTextBuffer);
             return true;
         }
 
@@ -3106,7 +3103,7 @@ static bool handleMainMenuCommand(uint32_t wParamPacked /*, HWND hwnd */) {
             if (g_interactionMode == InteractionMode::Run) {
                 showOpenFileDialogAndBuildFullPath(g_selectedLevelPath /*0x1A0*/);
                 loadLevelByIndex(levelIndex);
-                clearStatusLine(g_hintText);
+                clearStatusLine(g_statusLineTextBuffer);
                 updateNextLevelMenuItem();
                 matchedEntryCount = 0;
                 invalidateAndRedrawMainWindow();
@@ -3151,7 +3148,7 @@ static bool handleMainMenuCommand(uint32_t wParamPacked /*, HWND hwnd */) {
             enableMenuItemRestartFromLevel1(false); // id 0x65
             generateFileFromMappedData();
             loadLevelByIndex(levelIndex);
-            clearStatusLine(g_hintText);
+            clearStatusLine(g_statusLineTextBuffer);
             matchedEntryCount = 0;
             g_timerActive = true;
             invalidateAndRedrawMainWindow();
@@ -3950,13 +3947,12 @@ void destroyGdiResources() noexcept
 
 static void clearStatusLine(const char* str)
 {
-    if (!str) str = "";
-
+    if (!str) {
+        g_statusLineBuffer[0] = '\0';
+    } else {
+        std::strcpy(g_statusLineBuffer, str);
+    }
     InvalidateRect(g_mainWindow, nullptr, TRUE);
-
-    const int cap = (g_statusLineCapacity > 0) ? g_statusLineCapacity : 1;
-    std::strncpy(g_statusLineBuffer, str, static_cast<size_t>(cap - 1));
-    g_statusLineBuffer[cap - 1] = '\0';
 }
 
 void renderFullWallLayerSdl()
@@ -4017,106 +4013,106 @@ static void dispatchEventWithDefaults(int16_t eventCode)
 }
 
 void updateSlotAndDigitsFromCounter(
-    u32 counterLow,                 // arg_0
-    u32 counterHigh,                // arg_2 (mais en pratique on reconstruit 64b)
+    uint32_t counterLow,                 // arg_0
+    uint32_t counterHigh,                // arg_2 (mais en pratique on reconstruit 64b)
     SlotState& slot,                // *arg_4 (si)
     OutDigits& outDigits            // *arg_6 (di)
 )
 {
     // Rebuild 64-bit value from 16-bit halves as in original calling convention:
     // Ici on suppose que counterLow/High viennent déjà “alignés” (sinon adapte à tes wrappers).
-    u64 counter = (static_cast<u64>(counterHigh) << 16) | (static_cast<u64>(counterLow) & 0xFFFFu);
+    uint64_t counter = (static_cast<uint64_t>(counterHigh) << 16) | (static_cast<uint64_t>(counterLow) & 0xFFFFu);
 
     loadSpeedSettingFromEnvVar();
 
     // (speedMultiplierHigh:Low) + 0x12CE:A600
-    constexpr u32 kSpeedOffsetLow  = 0xA600u;
-    constexpr u32 kSpeedOffsetHigh = 0x12CEu;
+    constexpr uint32_t kSpeedOffsetLow  = 0xA600u;
+    constexpr uint32_t kSpeedOffsetHigh = 0x12CEu;
 
-    const u64 speed = (static_cast<u64>(speedMultiplierHigh) << 16) | static_cast<u64>(speedMultiplierLow);
-    const u64 offset = (static_cast<u64>(kSpeedOffsetHigh) << 16) | static_cast<u64>(kSpeedOffsetLow);
+    const uint64_t speed = (static_cast<uint64_t>(speedMultiplierHigh) << 16) | static_cast<uint64_t>(speedMultiplierLow);
+    const uint64_t offset = (static_cast<uint64_t>(kSpeedOffsetHigh) << 16) | static_cast<uint64_t>(kSpeedOffsetLow);
 
     counter = counter - (speed + offset);
 
     outDigits.zero = 0;
     {
-        i64 qSigned = 0;
-        outDigits.c = divmodSigned_u8(static_cast<i64>(counter), 60, qSigned);
+        int64_t qSigned = 0;
+        outDigits.c = divmodSigned_u8(static_cast<int64_t>(counter), 60, qSigned);
 
-        u64 qUnsigned = 0;
+        uint64_t qUnsigned = 0;
         (void)divmodUnsigned_u8(counter, 60, qUnsigned);
         counter = qUnsigned;
 
-        outDigits.a = divmodSigned_u8(static_cast<i64>(counter), 60, qSigned);
+        outDigits.a = divmodSigned_u8(static_cast<int64_t>(counter), 60, qSigned);
 
         (void)divmodUnsigned_u8(counter, 60, qUnsigned);
         counter = qUnsigned;
     }
 
-    constexpr u32 kDivA = 0x88F8u;
+    constexpr uint32_t kDivA = 0x88F8u;
 
     {
-        u64 q = 0;
+        uint64_t q = 0;
         (void)divmodUnsigned_u8(counter, kDivA, q);
 
-        constexpr u16 kBaseAdd = 0x07BC;
-        const u16 scaled = static_cast<u16>((static_cast<u16>(q & 0xFFFFu) << 2) + kBaseAdd);
+        constexpr uint16_t kBaseAdd = 0x07BC;
+        const uint16_t scaled = static_cast<uint16_t>((static_cast<uint16_t>(q & 0xFFFFu) << 2) + kBaseAdd);
         slot.base = scaled;
 
-        i64 qSigned = 0;
-        (void)divmodSigned_u8(static_cast<i64>(counter), kDivA, qSigned);
-        counter = static_cast<u64>(qSigned);
+        int64_t qSigned = 0;
+        (void)divmodSigned_u8(static_cast<int64_t>(counter), kDivA, qSigned);
+        counter = static_cast<uint64_t>(qSigned);
     }
-    constexpr u32 kCmp = 0x2250u;
-    constexpr u32 kDivB = 0x2238u;
+    constexpr uint32_t kCmp = 0x2250u;
+    constexpr uint32_t kDivB = 0x2238u;
 
-    if (static_cast<i64>(counter) >= 0 && geUnsigned64(counter, kCmp))
+    if (static_cast<int64_t>(counter) >= 0 && geUnsigned64(counter, kCmp))
     {
         counter -= kCmp;
-        slot.base = static_cast<u16>(slot.base + 1);
+        slot.base = static_cast<uint16_t>(slot.base + 1);
 
-        u64 q = 0;
+        uint64_t q = 0;
         (void)divmodUnsigned_u8(counter, kDivB, q);
-        slot.base = static_cast<u16>(slot.base + static_cast<u16>(q & 0xFFFFu));
+        slot.base = static_cast<uint16_t>(slot.base + static_cast<uint16_t>(q & 0xFFFFu));
 
-        i64 qSigned = 0;
-        (void)divmodSigned_u8(static_cast<i64>(counter), kDivB, qSigned);
-        counter = static_cast<u64>(qSigned);
+        int64_t qSigned = 0;
+        (void)divmodSigned_u8(static_cast<int64_t>(counter), kDivB, qSigned);
+        counter = static_cast<uint64_t>(qSigned);
     }
 
     if (speedFallbackUsed != 0)
     {
-        constexpr u32 kDiv24 = 24u;
-        constexpr u16 kPosBias = 0xF84E;
+        constexpr uint32_t kDiv24 = 24u;
+        constexpr uint16_t kPosBias = 0xF84E;
 
-        i64 qS = 0;
-        (void)divmodSigned_u8(static_cast<i64>(counter), kDiv24, qS);
+        int64_t qS = 0;
+        (void)divmodSigned_u8(static_cast<int64_t>(counter), kDiv24, qS);
 
-        u64 qU = 0;
+        uint64_t qU = 0;
         (void)divmodUnsigned_u8(counter, kDiv24, qU);
 
-        const u16 pos = static_cast<u16>(slot.base + kPosBias);
+        const uint16_t pos = static_cast<uint16_t>(slot.base + kPosBias);
         if (canPlaceEntityAtPosition(pos))
         {
             counter += 1;
         }
     }
     {
-        constexpr u32 kDiv24 = 24u;
+        constexpr uint32_t kDiv24 = 24u;
 
-        i64 qS = 0;
-        outDigits.b = divmodSigned_u8(static_cast<i64>(counter), kDiv24, qS);
+        int64_t qS = 0;
+        outDigits.b = divmodSigned_u8(static_cast<int64_t>(counter), kDiv24, qS);
 
-        u64 qU = 0;
+        uint64_t qU = 0;
         (void)divmodUnsigned_u8(counter, kDiv24, qU);
         counter = qU + 1;
     }
 
     if ((slot.base & 3u) == 0)
     {
-        constexpr u64 k60 = 60;
+        constexpr uint64_t k60 = 60;
 
-        if (static_cast<i64>(counter) >= 0 && counter > k60)
+        if (static_cast<int64_t>(counter) >= 0 && counter > k60)
         {
             counter -= 1;
         }
@@ -4138,7 +4134,7 @@ void updateSlotAndDigitsFromCounter(
     {
         const int idx = static_cast<int>(slot.index);
         const int8_t step = g_thresholdTable[idx];
-        const i64 step64 = static_cast<i64>(step);
+        const int64_t step64 = static_cast<int64_t>(step);
 
         // compare (step as signed 16/32) with counter as signed 64 in asm (cbw/cwd then cmp dx:ax vs arg2:arg0)
         if (step64 < 0) {
@@ -4146,24 +4142,24 @@ void updateSlotAndDigitsFromCounter(
             break;
         }
 
-        if (static_cast<u64>(step64) <= counter)
+        if (static_cast<uint64_t>(step64) <= counter)
         {
-            counter -= static_cast<u64>(step64);
-            slot.index = static_cast<u8>(slot.index + 1);
+            counter -= static_cast<uint64_t>(step64);
+            slot.index = static_cast<uint8_t>(slot.index + 1);
             continue;
         }
 
         // loc_7B2C behavior: inc index; slot.value = low byte of remaining
-        slot.index = static_cast<u8>(slot.index + 1);
-        slot.value = static_cast<u8>(counter & 0xFFu);
+        slot.index = static_cast<uint8_t>(slot.index + 1);
+        slot.value = static_cast<uint8_t>(counter & 0xFFu);
         break;
     }
 }
 
 void handlePackedMessage(uint32_t message)
 {
-    const u16 msgLow    = static_cast<u16>(message & 0xFFFFu);
-    const u16 eventCode = static_cast<u16>((message >> 16) & 0xFFFFu);
+    const uint16_t msgLow    = static_cast<uint16_t>(message & 0xFFFFu);
+    const uint16_t eventCode = static_cast<uint16_t>((message >> 16) & 0xFFFFu);
 
     showFileMessage(msgLow);
     dispatchEventWithDefaults(eventCode);
@@ -4171,10 +4167,10 @@ void handlePackedMessage(uint32_t message)
 
 void dispatchNotificationByCode(uint16_t code)
 {
-    extern const u16 kCodes[6];
+    extern const uint16_t kCodes[6];
 
-    u16 eventCode = 1;
-    u16 messageToken = 0x123C;
+    uint16_t eventCode = 1;
+    uint16_t messageToken = 0x123C;
 
     bool matched = false;
     for (int i = 0; i < 6; ++i) {
@@ -4401,14 +4397,14 @@ int dispatchValue(uint16_t value) {
     return 0;
 }
 
-i16 handleNotificationOrCallbackByCode(u16 eventCode)
+i16 handleNotificationOrCallbackByCode(uint16_t eventCode)
 {
     const i16 slotIndex = findIndexInTable(eventCode);
-    if (static_cast<u16>(slotIndex) == 0xFFFFu) {
+    if (static_cast<uint16_t>(slotIndex) == 0xFFFFu) {
         return 1;
     }
 
-    const u16 slotWord = g_notificationHandlerSlotWord[static_cast<u16>(slotIndex)];
+    const uint16_t slotWord = g_notificationHandlerSlotWord[static_cast<uint16_t>(slotIndex)];
 
     // slotWord == 1 => do nothing
     if (slotWord == 1u) {
@@ -4426,9 +4422,9 @@ i16 handleNotificationOrCallbackByCode(u16 eventCode)
     }
 
     // slotWord != 0 && != 1 => treat as callback pointer
-    g_notificationHandlerSlotWord[static_cast<u16>(slotIndex)] = 0;
+    g_notificationHandlerSlotWord[static_cast<uint16_t>(slotIndex)] = 0;
 
-    const u16 handlerParam = static_cast<u16>(g_notificationHandlerParam[static_cast<u16>(slotIndex)]);
+    const uint16_t handlerParam = static_cast<uint16_t>(g_notificationHandlerParam[static_cast<uint16_t>(slotIndex)]);
 
     const auto handlerFn = reinterpret_cast<NotificationHandlerFn>(
         static_cast<std::uintptr_t>(slotWord)

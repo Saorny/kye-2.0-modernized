@@ -14,6 +14,7 @@
 #include <tuple>
 #include <stdexcept>
 #include "dialog.h"
+#include "graph.h"
 
 static char g_inputDialogLabel[0x80];   // at 0x2BE0 (size guessed)
 static char g_inputDialogText[0x80];    // at 0x2B90 (size guessed)
@@ -180,16 +181,30 @@ void showGameOverDialog() {
     FREEPROCINSTANCE(dlgProc);
 }
 
-void showWhatDialog() {
-    FARPROC dlgProc = MAKEPROCINSTANCE(DLG_OK_FUNC, g_hInstance);
+void showWhatDialog()
+{
+    bool done = false;
+    SDL_Event e;
 
-    // Affiche une boîte de dialogue modale
-    DIALOGBOX(g_hInstance, "DLG_WHAT", g_hwnd, dlgProc);
+    while (!done) {
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_EVENT_QUIT) {
+                done = true;
+            }
+            if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+                e.type == SDL_EVENT_KEY_DOWN) {
+                done = true;
+            }
+        }
 
-    // Libère la procédure une fois la boîte fermée
-    FREEPROCINSTANCE(dlgProc);
+        SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 200);
+        SDL_RenderFillRect(g_renderer, nullptr);
+        drawWhatDialogUI();
+
+        SDL_RenderPresent(g_renderer);
+        SDL_Delay(16);
+    }
 }
-
 
 
 const char* getUiStringById(uint16_t id)
