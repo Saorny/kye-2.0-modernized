@@ -5,14 +5,12 @@
 #include <ctime>
 #include <system_error>
 #include <span>
+#include <chrono>
 #include "system.h"
 #include "file.h"
 #include "error.h"
 #include "game.h"
-
-uint16_t speedMultiplierHigh = 0;
-uint16_t speedMultiplierLow  = 0;
-uint8_t  speedFallbackUsed   = 1;
+#include "util.h"
 
 static constexpr const char* SPEED_ENV_KEY = "KYE_SPEED"; // <-- à ajuster selon ta vraie clé
 static constexpr uint16_t DEFAULT_SPEED_LOW  = 0x4650;    // ASM
@@ -56,6 +54,10 @@ bool setCurrentDateRaw(const DosDateRaw* date) {
     return true; // AL = 0
 }
 
+uint16_t encodeDosTime(const DosTime& t) {
+    return (t.hour << 11) | (t.minute << 5) | (t.second / 2);
+}
+
 void getCurrentTime(uint16_t* out) {
     if (!out) return;
     std::time_t t = std::time(nullptr);
@@ -74,10 +76,6 @@ uint16_t encodeDosDate(const DosDate& d) {
     return ((d.year - 1980) << 9) | (d.month << 5) | (d.day);
 }
 
-uint16_t encodeDosTime(const DosTime& t) {
-    return (t.hour << 11) | (t.minute << 5) | (t.second / 2);
-}
-
 static DateParts getCurrentDate() {
     const auto now = std::chrono::system_clock::now();
     const std::time_t t = std::chrono::system_clock::to_time_t(now);
@@ -85,8 +83,6 @@ static DateParts getCurrentDate() {
     std::tm local{};
 #if defined(_WIN32)
     localtime_s(&local, &t);
-#else
-    local = *std::localtime(&t);
 #endif
 
     return DateParts{
@@ -103,8 +99,6 @@ static TimeParts getCurrentTime() {
     std::tm local{};
 #if defined(_WIN32)
     localtime_s(&local, &t);
-#else
-    local = *std::localtime(&t);
 #endif
 
     const auto ms =
@@ -161,17 +155,106 @@ void seedGameRNG(uint16_t seed) {
     randomSeedLow = seed;
 }
 
-uint32_t computeTimestampNow(uint32_t* outTimestamp)
-{
-    const DateParts currentDate = getCurrentDate();
-    const TimeParts currentTime = getCurrentTime();
+const char* findEnvVarValue(const char* key) {
+    if (!key || key[0] == '\0') return nullptr;
 
-    const uint32_t ts = computeAdjustedTime(currentDate, currentTime);
+    const std::size_t keyLen = std::strlen(key);
+    const char first = key[0];
 
-    if (outTimestamp) {
-        *outTimestamp = ts;
+    for (const char* entry : environmentList) {
+        if (!entry || entry[0] == '\0') continue;
+        if (entry[0] != first) continue;
+        if (entry[keyLen] != '=') continue;
+        if (std::strncmp(entry, key, keyLen) != 0) continue;
+        return entry + keyLen + 1; // value
     }
-    return ts;
+    return nullptr;
+}
+
+static inline void setDefaults() {
+    speedFallbackUsed   = 1;
+    speedMultiplierHigh = DEFAULT_SPEED_HIGH;
+    speedMultiplierLow  = DEFAULT_SPEED_LOW;
+
+    std::strncpy(dst,  "000", 3); dst[3]  = '\0';
+    std::strncpy(dest, "000", 3); dest[3] = '\0';
+}
+
+static inline bool parseSignedDecimal(std::string_view s, int32_t& out) {
+    if (s.empty()) return false;
+    int sign = 1;
+    size_t i = 0;
+    if (s[0] == '+') { sign = 1; i = 1; }
+    else if (s[0] == '-') { sign = -1; i = 1; }
+    else return false;
+
+    if (i >= s.size() || !isDigit(s[i])) return false;
+
+    int32_t val = 0;
+    for (; i < s.size() && isDigit(s[i]); ++i) {
+        val = val * 10 + (s[i] - '0');
+    }
+    out = sign * val;
+    return true;
+}
+
+static inline void setSpeedMultiplierFromSignedInt(int32_t v) {
+    int64_t prod = static_cast<int64_t>(v) * 0x0E10LL;
+    uint32_t u   = static_cast<uint32_t>(prod);
+    speedMultiplierHigh = static_cast<uint16_t>(u >> 16);
+    speedMultiplierLow  = static_cast<uint16_t>(u & 0xFFFF);
+}
+
+void loadSpeedSettingFromEnvVar() {
+    const char* raw = findEnvVarValue(SPEED_ENV_KEY);
+    if (!raw) {
+        setDefaults();
+        return;
+    }
+
+    std::string_view s(raw);
+    if (s.size() < 4) {
+        setDefaults();
+        return;
+    }
+
+    if (!isDigit(s[0]) || !isDigit(s[1]) || !isDigit(s[2])) {
+        setDefaults();
+        return;
+    }
+
+    if (s[3] != '+' && s[3] != '-') {
+        setDefaults();
+        return;
+    }
+
+    dst[0] = s[0]; dst[1] = s[1]; dst[2] = s[2]; dst[3] = '\0';
+
+    int32_t parsed = 0;
+    if (!parseSignedDecimal(s.substr(3), parsed)) {
+        setDefaults();
+        return;
+    }
+
+    setSpeedMultiplierFromSignedInt(parsed);
+    speedFallbackUsed = 0;
+
+    for (size_t i = 3; i < s.size(); ++i) {
+        if (!isDigit(s[i])) continue;
+
+        std::string_view tail = s.substr(i);
+        if (tail.size() < 3) break;
+
+        if (isDigit(tail[1]) && isDigit(tail[2])) {
+            dest[0] = tail[0];
+            dest[1] = tail[1];
+            dest[2] = tail[2];
+            dest[3] = '\0';
+
+            speedFallbackUsed = 1;
+            break;
+        }
+    }
 }
 
 static inline uint64_t mul32(uint32_t a, uint32_t b) {
@@ -227,108 +310,15 @@ static uint32_t computeAdjustedTime(const DateParts& currentDate,
     return static_cast<uint32_t>(acc);
 }
 
-static inline void setDefaults() {
-    speedFallbackUsed   = 1;
-    speedMultiplierHigh = DEFAULT_SPEED_HIGH;
-    speedMultiplierLow  = DEFAULT_SPEED_LOW;
+uint32_t computeTimestampNow(uint32_t* outTimestamp)
+{
+    const DateParts currentDate = getCurrentDate();
+    const TimeParts currentTime = getCurrentTime();
 
-    std::strncpy(dst,  "000", 3); dst[3]  = '\0';
-    std::strncpy(dest, "000", 3); dest[3] = '\0';
-}
+    const uint32_t ts = computeAdjustedTime(currentDate, currentTime);
 
-static inline void setSpeedMultiplierFromSignedInt(int32_t v) {
-    int64_t prod = static_cast<int64_t>(v) * 0x0E10LL;
-    uint32_t u   = static_cast<uint32_t>(prod);
-    speedMultiplierHigh = static_cast<uint16_t>(u >> 16);
-    speedMultiplierLow  = static_cast<uint16_t>(u & 0xFFFF);
-}
-
-const char* findEnvVarValue(const char* key) {
-    if (!key || key[0] == '\0') return nullptr;
-
-    const std::size_t keyLen = std::strlen(key);
-    const char first = key[0];
-
-    for (const char* entry : environmentList) {
-        if (!entry || entry[0] == '\0') continue;
-        if (entry[0] != first) continue;
-        if (entry[keyLen] != '=') continue;
-        if (std::strncmp(entry, key, keyLen) != 0) continue;
-        return entry + keyLen + 1; // value
+    if (outTimestamp) {
+        *outTimestamp = ts;
     }
-    return nullptr;
-}
-
-static inline bool isDigit(char c) {
-    return std::isdigit(static_cast<unsigned char>(c)) != 0;
-}
-
-static inline bool parseSignedDecimal(std::string_view s, int32_t& out) {
-    if (s.empty()) return false;
-    int sign = 1;
-    size_t i = 0;
-    if (s[0] == '+') { sign = 1; i = 1; }
-    else if (s[0] == '-') { sign = -1; i = 1; }
-    else return false;
-
-    if (i >= s.size() || !isDigit(s[i])) return false;
-
-    int32_t val = 0;
-    for (; i < s.size() && isDigit(s[i]); ++i) {
-        val = val * 10 + (s[i] - '0');
-    }
-    out = sign * val;
-    return true;
-}
-
-void loadSpeedSettingFromEnvVar() {
-    const char* raw = findEnvVarValue(SPEED_ENV_KEY);
-    if (!raw) {
-        setDefaults();
-        return;
-    }
-
-    std::string_view s(raw);
-    if (s.size() < 4) {
-        setDefaults();
-        return;
-    }
-
-    if (!isDigit(s[0]) || !isDigit(s[1]) || !isDigit(s[2])) {
-        setDefaults();
-        return;
-    }
-
-    if (s[3] != '+' && s[3] != '-') {
-        setDefaults();
-        return;
-    }
-
-    dst[0] = s[0]; dst[1] = s[1]; dst[2] = s[2]; dst[3] = '\0';
-
-    int32_t parsed = 0;
-    if (!parseSignedDecimal(s.substr(3), parsed)) {
-        setDefaults();
-        return;
-    }
-
-    setSpeedMultiplierFromSignedInt(parsed);
-    speedFallbackUsed = 0;
-
-    for (size_t i = 3; i < s.size(); ++i) {
-        if (!isDigit(s[i])) continue;
-
-        std::string_view tail = s.substr(i);
-        if (tail.size() < 3) break;
-
-        if (isDigit(tail[1]) && isDigit(tail[2])) {
-            dest[0] = tail[0];
-            dest[1] = tail[1];
-            dest[2] = tail[2];
-            dest[3] = '\0';
-
-            speedFallbackUsed = 1;
-            break;
-        }
-    }
+    return ts;
 }

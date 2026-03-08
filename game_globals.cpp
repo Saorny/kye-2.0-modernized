@@ -28,8 +28,6 @@ namespace Globals {
 char g_levelHintTextBuffer[512] = {};
 char g_levelName[256] = {};
 char g_secondaryText[256] = {};
-char g_statusLineTextBuffer[512] = {};
-char g_selectedFilePath[0x100] = {};
 
 // --------------------------------------------------
 // File / dialog
@@ -37,7 +35,6 @@ char g_selectedFilePath[0x100] = {};
 bool g_openFileDialogAccepted = false;
 char g_openFileDialogPath[0x100] = {};
 char g_defaultOpenSuffix[0x40] = {};
-uint8_t fileAccessEnabled = 0;
 
 // --------------------------------------------------
 // Cursor / selection / state
@@ -68,7 +65,6 @@ int previousRow = 0;
 int previousCol = 0;
 
 int g_isMouseCaptured = 0;
-int someGlobalCondition = 0;
 
 int g_pendingEventCount = 0;
 int frameCounter = 0;
@@ -79,13 +75,7 @@ int frameCounter = 0;
 uint16_t randomSeedLow  = 0x4E35;
 uint16_t randomSeedHigh = 0x015A;
 
-// --------------------------------------------------
-// Name table
-// --------------------------------------------------
-std::vector<std::string> g_nameTable;
 int g_currentNameIndex = -1;
-std::string g_currentName;
-
 // --------------------------------------------------
 // Level changes / grids
 // --------------------------------------------------
@@ -108,55 +98,84 @@ uint8_t EntityTable[kMaxEntityLines] = {};
 // Status line
 // --------------------------------------------------
 char g_statusLineBuffer[512] = {};
-int16_t currentEntryIndex = -1;
 
 // --------------------------------------------------
 // Callback / events
 // --------------------------------------------------
 CallbackFn g_callbackTable[256] = {};
-EventHandler g_eventHandlers[255] = {};
 
-static void noopCallback() {}
+void noopCallback() {}
 VoidCallback g_validateInternalBufferCallback = &noopCallback;
 VoidCallback g_configureFileMode = nullptr;
 VoidCallback g_invokeExternalCallbackFn = &noopCallback;
 int g_levelIndex = 1;
 
-// --------------------------------------------------
-// Graphics legacy
-// --------------------------------------------------
-LegacyGfxBackend::WindowHandle g_hdc2 = nullptr;
-void* bitmap_kye = nullptr;
-
 std::int16_t srcRow = 0;
 std::int16_t srcCol = 0;
-std::int16_t cellWidth = 0;
-std::int16_t cellHeight = 0;
-
-int g_newRow = -1;
-int g_newCol = -1;
+std::int16_t cellWidth = 16;
+std::int16_t cellHeight = 16;
 
 // --------------------------------------------------
 // Game state
 // --------------------------------------------------
-GameState g_gameState;
+GameState g_gameState{};
 
 // --------------------------------------------------
 // Environment
 // --------------------------------------------------
 char** g_environmentStringPtrs = nullptr;
-
-// --------------------------------------------------
-// Misc
-// --------------------------------------------------
-int levelChangeTable[256] = {};
-char* loadedLevelName[256] = {};
-char* loadedLevelHint[256] = {};
-char* filepath = nullptr;
-
 int matchedEntryCount = 0;
 
-// --------------------------------------------------
-// Constants
-// --------------------------------------------------
-const char* MSG_CANNOT_OPEN_FILE = "Cannot open file: ";
+NewLevelDialogResult g_newLevelDialogResult = NewLevelDialogResult::None;
+
+SDL_FRect g_panel{};
+SDL_FRect g_okBtn{};
+SDL_FRect g_cancelBtn{};
+bool g_newLevelDialogOpen = false;
+
+char g_speedPrefix3[4] = {};
+char g_speedTag3[4]    = {};
+
+const char* kEnvKey        = "TZ";   // dseg02:10EC "TZ\0"
+const char* kDefaultPrefix = "EST";  // dseg02:10EF "EST\0"
+const char* kDefaultTag    = "EDT";  // dseg02:10F3 "EDT\0"
+
+bool     speedFallbackUsed = true;
+uint16_t speedMultiplierHigh = 0;
+uint16_t speedMultiplierLow  = 0x4650; // fallback legacy
+
+int pendingRow = 0;
+int pendingCol = 0;
+int remainingDiamondCount = 0;
+
+const std::unordered_map<int,const char*> exceptionMessages =
+{
+    {129,"Invalid"},
+    {130,"DeNormal"},
+    {131,"Divide by Zero"},
+    {132,"Overflow"},
+    {133,"Underflow"},
+    {134,"Inexact"},
+    {135,"Unemulated"},
+    {138,"Stack Overflow"},
+    {139,"Stack Underflow"},
+    {140,"Exception Raised"}
+};
+
+const std::unordered_map<int, NotificationEntry> notifications =
+{
+    {NOTIFY_FATAL, NotificationEntry{"Fatal error",3}},
+    {NOTIFY_FILE_ERROR, NotificationEntry{"File error",1}},
+    {NOTIFY_MEMORY_ERROR, NotificationEntry{"Memory error",1}},
+    {NOTIFY_DATA_ERROR, NotificationEntry{"Data error",1}},
+    {NOTIFY_STATE_ERROR, NotificationEntry{"Invalid state",1}}
+};
+
+bool g_hasDeviceContext = false;
+bool g_nextLevelEnabled = true;
+SDL_Window* g_windowHandle2 = nullptr;
+
+SDL_Window* g_toolboxWindow = nullptr;
+SDL_Renderer* g_toolboxRenderer = nullptr;
+bool toolboxCreated = false;
+std::array<CallbackEntry, MAX_CALLBACKS> g_callbackQueue{};

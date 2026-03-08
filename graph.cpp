@@ -2,18 +2,15 @@
 #include <cstdint>
 #include <fstream>
 #include <ctime>
-#include <dos.h>
 #include <cstdio>
 #include <vector>
 #include <filesystem>
 #include <string>
 #include <system_error>
 #include <cstddef>
-#include <windows.h>
 #include <tuple>
 #include <cstring>
 #include "graph.h"
-#include "dialog.h"
 #include "game.h"
 #include "util.h"
 #include "system.h"
@@ -26,110 +23,129 @@ struct FileEntry {
     bool isDir = false;
 };
 
-HWND      g_hwnd = nullptr;
-
-int isPendingDraw = 0;
-int colOffsetBytes = 0;
-int cellHeight = 16;
-int cellWidth = 16;
-int gridOriginX = 0;
-int gridOriginY = 0;
+bool isPendingDraw = false;
 uint16_t g_biosTickCountLo = 0;
 uint16_t g_biosTickCountHi = 0;
 
-HDC g_hwnd = nullptr;
-HGDIOBJ gridPen = nullptr;
-
-HBITMAP g_blockBitmap;
-
-
-void maybeDrawPendingRectangle() {
-    if (isPendingDraw == 0) {
-        return;
+void maybeDrawPendingRectangle()
+{
+    if (isPendingDraw)
+    {
+        if (gameGrid[pendingRow][pendingCol] == CELL_FLAG_EMPTY)
+        {
+            drawRectangleFromGrid(pendingRow, pendingCol);
+        }
     }
 
-    uint16_t row = pendingRow;
-    uint16_t col = pendingCol;
+    isPendingDraw = false;
+}
 
-    // Calcule l'adresse du flag dans une table (tableau de short)
-    uint16_t offset = (row * 0x28) + (col * 2);
-    int16_t* cellFlags = reinterpret_cast<int16_t*>(0x127E); // Base de la table (hypothétique)
-    
-    if (cellFlags[offset / 2] == -1) {
-        drawRectangleFromGrid(row, col);
-    }
+static SDL_FRect spriteSrcRect(int tileIndex, int atlasW, int atlasH, int cellW, int cellH) {
+    const int cols = (cellW > 0) ? (atlasW / cellW) : 0;
+    if (cols <= 0) return SDL_FRect{0,0,0,0};
 
-    isPendingDraw = 0;
+    const int x = (tileIndex % cols) * cellW;
+    const int y = (tileIndex / cols) * cellH;
+    return SDL_FRect{ (float)x, (float)y, (float)cellW, (float)cellH };
+}
+
+static void drawTile(SDL_Renderer* r,
+                     SDL_Texture* atlas,
+                     int atlasW,
+                     int tileIndex,
+                     int cellW, int cellH,
+                     float xDst, float yDst)
+{
+    SDL_FRect src = spriteSrcRect(tileIndex, atlasW, /*atlasH unused*/0, cellW, cellH);
+    SDL_FRect dst{ xDst, yDst, (float)cellW, (float)cellH };
+    SDL_RenderTexture(r, atlas, &src, &dst);
+}
+
+bool loadSpriteSheets()
+{
+    if (!g_renderer)
+        return false;
+
+    g_sheetKye      = loadBmpSheet(g_renderer, "graph/graph_kye.bmp",      16, 16);
+    g_sheetMobiles  = loadBmpSheet(g_renderer, "graph/graph_mobiles.bmp",  16, 16);
+    g_sheetStatics  = loadBmpSheet(g_renderer, "graph/graph_statics.bmp",  16, 16);
+    g_sheetFont     = loadBmpSheet(g_renderer, "graph/font.bmp",           8, 16);
+
+    return true;
 }
 
 void drawPendingBlock()
 {
-    // Obtenir le DC de la fenêtre
-    HDC windowDC = GetDC(g_hdc2);
-    if (!windowDC) return;
+    const int16_t destY = pendingRow * cellHeight;
+    const int16_t destX = pendingCol * cellWidth;
 
-    // Créer un DC mémoire compatible avec celui de la fenêtre
-    HDC memoryDC = CreateCompatibleDC(windowDC);
-    if (!memoryDC) {
-        ReleaseDC(g_hdc2, windowDC);
-        return;
-    }
+    constexpr int16_t tileSize = 16;
 
-    // Sélectionner le bitmap du bloc dans le DC mémoire
-    HGDIOBJ oldObj = SelectObject(memoryDC, g_blockBitmap);
+    // Source = (16, 0)
+    SDL_FRect srcRect{
+        16.0f,
+        0.0f,
+        static_cast<float>(tileSize),
+        static_cast<float>(tileSize)
+    };
 
-    // Calculer les coordonnées en pixels
-    int pixelY = pendingRow * cellHeight; // en général 16
-    int pixelX = pendingCol * cellWidth;  // idem
+    SDL_FRect dstRect{
+        static_cast<float>(destX),
+        static_cast<float>(destY),
+        static_cast<float>(tileSize),
+        static_cast<float>(tileSize)
+    };
 
-    // Blitter le bloc depuis le DC mémoire vers le DC de la fenêtre
-    BitBlt(
-        windowDC,       // DC de destination
-        pixelX, pixelY, // position dans la fenêtre
-        16, 16,         // taille du bloc
-        memoryDC,       // DC source
-        16, 0,          // position dans le bitmap
-        SRCCOPY         // mode de copie
+    SDL_RenderTexture(
+        g_renderer,
+        g_sheetKye.tex,
+        &srcRect,
+        &dstRect
     );
-
-    // Nettoyage
-    SelectObject(memoryDC, oldObj);
-    DeleteDC(memoryDC);
-    ReleaseDC(g_hdc2, windowDC);
 }
 
 int isPointInRect(int x, int y) {
-    return PTINRECT(&g_mainRect, x, y);
+    return (x >= g_mainRect.left && x < g_mainRect.right &&
+            y >= g_mainRect.top  && y < g_mainRect.bottom);
 }
 
-void showMessage(const char* caption, const char* message) {
-    MessageBoxA(
-        g_hdc2,
-        message,
+void showMessage(const char* caption, const char* message)
+{
+    if (!g_window)
+    {
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION,
+                    "showMessage called without window: %s - %s",
+                    caption, message);
+        return;
+    }
+
+    SDL_ShowSimpleMessageBox(
+        SDL_MESSAGEBOX_WARNING,
         caption,
-        MB_ICONWARNING
+        message,
+        g_window
     );
 }
 
+void drawRectangleFromGrid(int row, int col)
+{
+    // 1) dirty mark (adapte sur TON buffer)
+    // ex: g_gridAuxA[row][col] = CELL_FLAG_EMPTY; // 0xFFFF
+    g_gridAuxA[row][col] = static_cast<int16_t>(0xFFFF);
 
-void drawRectangleFromGrid(int row, int col) {
-    // Marque la cellule dans la grille comme sélectionnée
-    g_state.bottomEntityMap[row][col] = 0xFFFF;
+    // 2) coords pixels
+    const int x0 = gridOriginX + col * cellWidth;
+    const int y0 = gridOriginY + row * cellHeight;
 
-    // Sélectionne l'objet graphique (stylo/pinceau ?) à utiliser pour dessiner
-    HGDIOBJ oldPen = SelectObject(g_hwnd, gridPen);
+    SDL_FRect r;
+    r.x = static_cast<float>(x0);
+    r.y = static_cast<float>(y0);
+    r.w = static_cast<float>(cellWidth);
+    r.h = static_cast<float>(cellHeight);
 
-    // Calcule les coordonnées en pixels de la cellule à dessiner
-    int top    = gridOriginY + row * cellHeight;
-    int left   = gridOriginX + col * cellWidth;
-    int bottom = top + cellHeight;
-    int right  = left + cellWidth;
-
-    // Dessine le rectangle à la position donnée
-    Rectangle(g_hwnd, left, top, right, bottom);
-
-    // (Optionnel) On pourrait re-sélectionner l'ancien objet si besoin
-    // SelectObject(g_hdc2, oldPen);
+    // “pen_gray” → tu choisis une couleur (gris)
+    SDL_SetRenderDrawColor(g_renderer, 128, 128, 128, 255);
+    SDL_RenderRect(g_renderer, &r);
 }
 
 static const char* getLegacyString(uint16_t offset) {
@@ -162,8 +178,8 @@ void initializeWindowSize() {
 
     const char* titlePrefix = getLegacyString(0x0444);
     appendBytes(windowTitle, sizeof(windowTitle), titlePrefix, 4);
-
-    const char* base = getLegacyString(g_selectedFilePath);
+    const char* base = "Kye (Modern)";
+    // const char* base = getLegacyString(g_selectedFilePath);
     if (base && base[0] != '\0') {
         const char* titleMid5 = getLegacyString(0x0448);
         appendBytes(windowTitle, sizeof(windowTitle), titleMid5, 5);
@@ -184,32 +200,6 @@ void initializeWindowSize() {
     }
 }
 
-void loadGraphicsResources() {
-    // Création des brosses de couleur unie
-    brush_black = CreateSolidBrush(RGB(0x00, 0x00, 0x00));
-    brush_white = CreateSolidBrush(RGB(0xFF, 0xFF, 0xFF));
-    brush_blue  = CreateSolidBrush(RGB(0x00, 0x00, 0xFF));
-    brush_green = CreateSolidBrush(RGB(0x00, 0xFF, 0x00));
-    brush_red   = CreateSolidBrush(RGB(0xFF, 0x00, 0x00));
-
-    // Création de stylos (ligne 1 pixel)
-    pen_black = CreatePen(PS_SOLID, 1, RGB(0x00, 0x00, 0x00));
-    pen_gray  = CreatePen(PS_SOLID, 1, RGB(0xFF, 0xFF, 0xFF));  // probablement utilisé pour la grille
-    pen_blue  = CreatePen(PS_SOLID, 1, RGB(0x00, 0x00, 0xFF));
-
-    // Chargement des bitmaps : "kye", "block", "wall"
-    bitmap_kye   = LoadBitmap(g_hInstance, kye);
-    bitmap_block = LoadBitmap(g_hInstance, aBlock);
-    bitmap_wall  = LoadBitmap(g_hInstance, aWall);
-}
-
-void stopGameTimer() {
-    if (g_timerId != 0) {
-        KILLTIMER(g_hwnd, 0);  // Stoppe le timer ID 0 pour ce contexte
-    }
-    g_timerActive = 0;
-}
-
 const char* getPointerFromSegmentOffset(uint16_t seg, uint16_t off)
 {
     (void)seg;
@@ -217,7 +207,23 @@ const char* getPointerFromSegmentOffset(uint16_t seg, uint16_t off)
     return "Kye (Modern)";
 }
 
-static int initializeGameWindow(
+bool initializeRendererIfNeeded()
+{
+    if (g_renderer != nullptr)
+        return true;
+
+    g_renderer = SDL_CreateRenderer(
+        g_window,
+        nullptr
+    );
+
+    if (!g_renderer)
+        return false;
+
+    return true;
+}
+
+int initializeGameWindow(
     int cmdShow,
     uint16_t titleSegment,
     uint16_t titleOffset,
@@ -229,21 +235,21 @@ static int initializeGameWindow(
     (void)hInstance;
 
     char windowTitle[96] = {0};
+    const char* title = getPointerFromSegmentOffset(titleSegment, titleOffset);
 
-    {
-        const char* title = getPointerFromSegmentOffset(titleSegment, titleOffset);
-        int i = 0;
-        while (title && title[i] != '\0' && i < (int)sizeof(windowTitle) - 1) {
-            windowTitle[i] = title[i];
-            ++i;
-        }
-        windowTitle[i] = '\0';
+    if (title) {
+        std::strncpy(windowTitle, title, sizeof(windowTitle) - 1);
     }
 
+    if (!initializeRendererIfNeeded())
+        return 0;
+
+    if (!loadSpriteSheets())
+        return 0;
+
     initializeWindowSize();
-    loadGraphicsResources();
-    initializeWindowHandleIfNeeded();
     initializeLayoutRects();
+
     advanceToNextLevelOrBlock();
 
     const int seed = computeTimestampNow(nullptr);
@@ -253,167 +259,241 @@ static int initializeGameWindow(
     frameCounter = 0;
     resetLevelStateMemory();
 
-    if (!isDiggerKeyword(windowTitle)) {
-        copyMemory(g_selectedFilePath, borderTitle, 10);
-        loadLevelByIndex(g_levelIndex);
-        clearStatusLine(g_statusLineBuffer);
-        updateNextLevelMenuItem();
-        matchedEntryCount = 0;
-        showWhatDialog();
-    }
-
     copyMemory(g_selectedFilePath, defaultKyeTitle, 12);
     loadLevelByIndex(g_levelIndex);
     clearStatusLine(g_statusLineBuffer);
     updateNextLevelMenuItem();
     matchedEntryCount = 0;
 
+    if (!isDiggerKeyword(windowTitle)) {
+        showWhatDialog();
+    }
+
     return 1;
 }
 
-void initializeLayoutRects(HWND hWnd) {
-    RECT windowRect = {};
-    RECT clientRect = {};
-    RECT rect1 = {};
-    RECT rect2 = {};
-    RECT rect3 = {};
+void showWhatDialog()
+{
+    showDialog("DLG_WHAT", DLG_OK_FUNC);
+}
 
-    // 1. Récupérer les dimensions de la fenêtre et client
-    GetWindowRect(hWnd, &windowRect);
-    GetClientRect(hWnd, &clientRect);
+void DLG_OK_FUNC()
+{
+    handleDialogClose(NewLevelDialogResult::Accepted);
+}
 
-    // 2. Calcul du point d’origine Y de la grille
-    gridOriginY = clientRect.top;
+void showDialog(const char* dialogId, VoidCallback onOk)
+{
+    g_newLevelDialogOpen = true;
 
-    // 3. Premier rectangle : grid zone ?
-    SetRect(
-        &rect1,
-        clientRect.left,
-        clientRect.top,
-        clientRect.left + 0x1E0, // +480
-        clientRect.top + 0x140   // +320
+    // Layout simple centré
+    g_panel = { 200.f, 150.f, 240.f, 140.f };
+
+    g_okBtn = {
+        g_panel.x + 30.f,
+        g_panel.y + g_panel.h - 40.f,
+        70.f,
+        30.f
+    };
+
+    g_cancelBtn = {
+        g_panel.x + g_panel.w - 100.f,
+        g_panel.y + g_panel.h - 40.f,
+        70.f,
+        30.f
+    };
+
+    // On stocke le callback
+    if (onOk)
+    {
+        g_callbackQueue[0] = {
+            0,
+            0,
+            onOk
+        };
+    }
+}
+
+static SDL_Rect makeRectLTRB(int l, int t, int r, int b) {
+    SDL_Rect out{};
+    out.x = l;
+    out.y = t;
+    out.w = r - l;
+    out.h = b - t;
+    return out;
+}
+
+void initializeLayoutRects() {
+    if (!g_window) return;
+
+    // SDL3: préfère "InPixels" si tu veux coller au rendu réel (DPI)
+    int winW = 0, winH = 0;
+    SDL_GetWindowSizeInPixels(g_window, &winW, &winH);
+
+    // En Win32, clientRect.left/top = 0 en coords client.
+    // Donc l’équivalent simple en SDL : client = (0,0, winW, winH)
+    g_clientRectPx = SDL_Rect{ 0, 0, winW, winH };
+
+    // (Optionnel) windowRect : SDL ne te donne pas un "screen rect" LTRB comme Win32,
+    // mais tu peux stocker la même chose que client pour tes calculs.
+    g_windowRectPx = g_clientRectPx;
+
+    // si = 0x10 dans l'asm
+    constexpr int kBandHeight = 0x10; // 16
+
+    // A) gridOriginY : 480x320 à partir du client origin
+    g_gridRectPx = makeRectLTRB(
+        g_clientRectPx.x,
+        g_clientRectPx.y,
+        g_clientRectPx.x + 0x1E0, // 480
+        g_clientRectPx.y + 0x140  // 320
     );
 
-    // 4. Deuxième rectangle : baseX ?
-    SetRect(
-        &rect2,
-        clientRect.left,
+    // B) baseX : bande UI gauche
+    g_baseRectPx = makeRectLTRB(
+        g_clientRectPx.x,
         baselineY + 1,
-        clientRect.left + 0x12C, // +300
-        baselineY + 0x10 + 1     // +16 + 1
+        g_clientRectPx.x + 0x12C, // 300
+        baselineY + kBandHeight + 1
     );
-    baseX = rect2.left;
 
-    // 5. Troisième rectangle : bouton / barre ?
-    SetRect(
-        &rect3,
+    // C) invalidatedRect : bande UI droite
+    g_invalidateRectPx = makeRectLTRB(
         leftEdge3,
         baselineY + 1,
         rightEdge3 + 2,
-        baselineY + 0x10 + 1
+        baselineY + kBandHeight + 1
     );
 }
 
 void renderEntityToSdl(int16_t entityIndex)
 {
-    if (entityIndex < 0 || entityIndex >= GameState::MAX_NUM_ENTITIES) return;
-
-    const EntityActionStruct& e = g_gameState.entities[entityIndex];
-
-    const int type    = e.actionCode;
-    const int row     = e.row;
-    const int col     = e.col;
-    const int subtype = e.timer;
-
-    int srcX = 0;
-    int srcY = 0;
-
-    if (type >= 0x0F && type <= 0x13) {
-        srcX = type << 4;
-        srcY = subtype << 4;         // 0..3 -> 0,16,32,48
-    } else if (type < 0x17) {
-        srcX = type << 4;
-        srcY = 0;
-    } else if (type >= 0x32 && type <= 0x3B) {
-        srcX = type << 4;
-        srcY = 0x0F00;               // tu as dit "on garde"
-    } else {
-        srcX = type << 4;
-        srcY = 0;
-    }
-
-    const SDL_Rect src{ srcX, srcY, 16, 16 };
-    const SDL_Rect dst{ col * cellWidth, row * cellHeight, 16, 16 };
-
-    SDL_RenderCopy(gRenderer, spriteSheet, &src, &dst);
-}
-
-void drawRectangle(i16 left, i16 top, i16 right, i16 bottom)
-{
-    HDC hdc = GetDC(g_hdc2);
-    if (!hdc) {
+    if (entityIndex < 0 ||
+        entityIndex >= static_cast<int16_t>(g_gameState.entities.size()) ||
+        g_sheetMobiles.tex == nullptr)
+    {
         return;
     }
 
-    Rectangle(hdc, left, top, right, bottom);
-    ReleaseDC(g_hdc2, hdc);
-}
+    const EntityActionStruct& entity =
+        g_gameState.entities[entityIndex];
 
+    const int type = static_cast<int>(entity.entityType);
 
-void drawTextAt(i16 x, i16 y, const char* text, int length)
-{
-    HDC hdc = GetDC(g_hdc2);
-    if (!hdc) {
-        return;
+    SDL_FRect dstRect{
+        static_cast<float>(gridOriginX + entity.col * cellWidth),
+        static_cast<float>(gridOriginY + entity.row * cellHeight),
+        static_cast<float>(cellWidth),
+        static_cast<float>(cellHeight)
+    };
+
+    float srcX = 0;
+    float srcY = 0;
+
+    if (type >= 0x0F && type <= 0x13)
+    {
+        srcX = static_cast<float>(entity.timer * 16);
+        srcY = static_cast<float>(type * 16);
+    }
+    else if (type >= 0x32 && type <= 0x3B)
+    {
+        srcX = static_cast<float>(type * 16);
+        srcY = 16.0f;
+    }
+    else
+    {
+        srcX = static_cast<float>(type * 16);
+        srcY = 0.0f;
     }
 
-    TextOutA(hdc, x, y, text, length);
-    ReleaseDC(g_hdc2, hdc);
+    SDL_FRect srcRect{
+        srcX,
+        srcY,
+        16.0f,
+        16.0f
+    };
+
+    SDL_RenderTexture(g_renderer, g_sheetMobiles.tex, &srcRect, &dstRect);
 }
 
 int showNameInputDialog()
 {
-    INT_PTR result = DialogBoxW(
-        g_hInstance, 
-        L"DLG_NAM1", 
-        g_mainWindow,
-        DLG_INPNAM_FUNC
-    );
+    if (!g_window || !g_renderer)
+        return 0;
 
-    return static_cast<int>(result);
+    g_newLevelDialogOpen = true;
+    g_newLevelDialogResult = NewLevelDialogResult::None;
+    g_levelInput.clear();
+
+    SDL_StartTextInput(g_window);
+
+    auto pointInFRect = [](float x, float y, const SDL_FRect& r) -> bool {
+        return x >= r.x && x < (r.x + r.w) && y >= r.y && y < (r.y + r.h);
+    };
+
+    while (g_newLevelDialogResult == NewLevelDialogResult::None) {
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) {
+            if (e.type == SDL_EVENT_QUIT) {
+                g_newLevelDialogResult = NewLevelDialogResult::Cancelled;
+                break;
+            }
+
+            if (e.type == SDL_EVENT_KEY_DOWN) {
+                const SDL_Keycode key = e.key.key;
+
+                if (key == SDLK_ESCAPE) {
+                    g_newLevelDialogResult = NewLevelDialogResult::Cancelled;
+                } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+                    g_newLevelDialogResult = NewLevelDialogResult::Accepted;
+                } else if (key == SDLK_BACKSPACE) {
+                    if (!g_levelInput.empty())
+                        g_levelInput.pop_back();
+                }
+            }
+
+            if (e.type == SDL_EVENT_TEXT_INPUT) {
+                if (g_levelInput.size() < 120) {
+                    g_levelInput += e.text.text; // UTF-8
+                }
+            }
+
+            if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) {
+                const float mx = static_cast<float>(e.button.x);
+                const float my = static_cast<float>(e.button.y);
+
+                if (pointInFRect(mx, my, g_okBtn)) {
+                    g_newLevelDialogResult = NewLevelDialogResult::Accepted;
+                } else if (pointInFRect(mx, my, g_cancelBtn)) {
+                    g_newLevelDialogResult = NewLevelDialogResult::Cancelled;
+                }
+            }
+        }
+        drawWhatDialogUI();
+        SDL_RenderPresent(g_renderer);
+        SDL_Delay(1);
+    }
+
+    SDL_StopTextInput(g_window);
+    g_newLevelDialogOpen = false;
+
+    return (g_newLevelDialogResult == NewLevelDialogResult::Accepted) ? 1 : 0;
 }
 
-static GridCellRect computeHudCellRectFromIndex(i16 cellIndex)
+GridCellRect computeHudCellRectFromIndex(std::int16_t cellIndex)
 {
-    const i16 gridRow = static_cast<i16>(cellIndex / 0x10);
-    const i16 gridCol = static_cast<i16>(cellIndex % 0x10);
+    const std::int16_t gridRow = static_cast<std::int16_t>(cellIndex / 0x10);
+    const std::int16_t gridCol = static_cast<std::int16_t>(cellIndex % 0x10);
 
-    const i16 cellBaseX = static_cast<i16>(gridRow * 0x14);
-    const i16 cellBaseY = static_cast<i16>(gridCol * 0x14);
+    const std::int16_t cellBaseX = static_cast<std::int16_t>(gridRow * 0x14);
+    const std::int16_t cellBaseY = static_cast<std::int16_t>(gridCol * 0x14);
 
     return GridCellRect{
-        static_cast<i16>(cellBaseX + 2),
-        static_cast<i16>(cellBaseY + 2),
-        static_cast<i16>(cellBaseX + 0x12),
-        static_cast<i16>(cellBaseY + 0x12),
+        static_cast<std::int16_t>(cellBaseX + 2),
+        static_cast<std::int16_t>(cellBaseY + 2),
+        static_cast<std::int16_t>(cellBaseX + 0x12),
+        static_cast<std::int16_t>(cellBaseY + 0x12),
     };
-}
-
-void drawHudCellOutlineFromIndex_SDL(i16 cellIndex)
-{
-    const auto r = computeHudCellRectFromIndex(cellIndex);
-
-    SDL_Rect rect;
-    rect.x = r.x0;
-    rect.y = r.y0;
-    rect.w = r.x1 - r.x0;
-    rect.h = r.y1 - r.y0;
-
-    SDL_SetRenderDrawColor(gRenderer, 255, 255, 255, 255); // brush_white fill? (si tu veux fill)
-    // SDL_RenderFillRect(gRenderer, &rect);
-
-    SDL_SetRenderDrawColor(gRenderer, 128, 128, 128, 255); // pen_gray
-    SDL_RenderDrawRect(gRenderer, &rect);
 }
 
 void renderFrame()
@@ -428,37 +508,85 @@ void renderFrame()
     initializeLayoutRects();
     renderHudAndFrame();
 
-    SDL_RenderPresent(gRenderer);
+    SDL_RenderPresent(g_renderer);
 
     g_isRendering = false;
 }
 
 
-static inline void setDrawColorPenBlack() { SDL_SetRenderDrawColor(gRenderer, 0, 0, 0, 255); }
-static inline void setDrawColorPenGray()  { SDL_SetRenderDrawColor(gRenderer, 128, 128, 128, 255); }
+static inline void setDrawColorPenBlack() { SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255); }
+static inline void setDrawColorPenGray()  { SDL_SetRenderDrawColor(g_renderer, 128, 128, 128, 255); }
 
 void renderHudAndFrame()
 {
-    setDrawColorPenBlack();
-    SDL_RenderDrawLine(gRenderer, baseX, uiTopY - 1, uiRightX, uiTopY - 1);
-    SDL_RenderDrawLine(gRenderer, rightEdge3 + 1, baseY, rightEdge3 + 1, uiBottomLineY + 2);
+    Uint8 oldR, oldG, oldB, oldA;
+    SDL_GetRenderDrawColor(g_renderer, &oldR, &oldG, &oldB, &oldA);
+    SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
+    SDL_RenderLine(
+        g_renderer,
+        (float)baseX, (float)(uiTopY - 1),
+        (float)uiRightX, (float)(uiTopY - 1)
+    );
+    SDL_RenderLine(
+        g_renderer,
+        (float)(rightEdge3 + 1), (float)baseY,
+        (float)(rightEdge3 + 1), (float)(uiBottomLineY + 2)
+    );
     renderLivesAndLevelInfo();
-    setDrawColorPenGray();
-
-    const SDL_Rect statusBox{
-        statusBoxLeftX,
-        uiTopY,
-        uiRightX - statusBoxLeftX,
-        uiBottomY - uiTopY
+    SDL_SetRenderDrawColor(g_renderer, 255, 255, 255, 255);
+    SDL_FRect hudRect{
+        (float)uiLeftX,
+        (float)uiTopY,
+        (float)(uiRightX - uiLeftX),
+        (float)(uiBottomY - uiTopY)
     };
-    SDL_RenderDrawRect(gRenderer, &statusBox);
-
-    setDrawColorPenBlack();
-
-    const int len = cStringLen(statusLineBuffer); // asm: scasb -> longueur
-    drawTextSdl(statusBoxLeftX + 4, uiTopY, statusLineBuffer, len);
-
+    SDL_RenderRect(g_renderer, &hudRect);
+    SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
+    const char* hudText = hudMessageText;
+    const int hudLen = (int)SDL_strlen(hudText);
+    drawTextAt((int16_t)(uiLeftX + 4), (int16_t)uiTopY, hudText, hudLen);
+    SDL_SetRenderDrawColor(g_renderer, oldR, oldG, oldB, oldA);
     renderFrameByInteractionMode();
+}
+
+void drawTextAt(int16_t x, int16_t y, const char* text, int length)
+{
+    if (!g_renderer || !g_sheetFont.tex || !text || length <= 0)
+        return;
+
+    constexpr int glyphW = 8;
+    constexpr int glyphH = 16;
+    constexpr int firstChar = 32;      // ASCII space
+    constexpr int glyphsPerRow = 16;   // 16 colonnes dans la sheet
+
+    for (int i = 0; i < length; ++i)
+    {
+        unsigned char c = static_cast<unsigned char>(text[i]);
+
+        if (c < firstChar)
+            continue;
+
+        int index = c - firstChar;
+
+        int srcCol = index % glyphsPerRow;
+        int srcRow = index / glyphsPerRow;
+
+        SDL_FRect src{
+            static_cast<float>(srcCol * glyphW),
+            static_cast<float>(srcRow * glyphH),
+            static_cast<float>(glyphW),
+            static_cast<float>(glyphH)
+        };
+
+        SDL_FRect dst{
+            static_cast<float>(x + i * glyphW),
+            static_cast<float>(y),
+            static_cast<float>(glyphW),
+            static_cast<float>(glyphH)
+        };
+
+        SDL_RenderTexture(g_renderer, g_sheetFont.tex, &src, &dst);
+    }
 }
 
 static bool endsWithCaseInsensitive(const std::string& s, const std::string& suffix) {
@@ -472,15 +600,12 @@ static bool endsWithCaseInsensitive(const std::string& s, const std::string& suf
 }
 
 static std::string extensionFromGlob(const char* glob) {
-    // "*.kye" -> ".kye"
-    // si glob bizarre, fallback: ""
     if (!glob) return "";
     std::string g = glob;
-    // retire espaces
     while (!g.empty() && std::isspace(static_cast<unsigned char>(g.back()))) g.pop_back();
     while (!g.empty() && std::isspace(static_cast<unsigned char>(g.front()))) g.erase(g.begin());
     if (g.size() >= 3 && g[0] == '*' && g[1] == '.') {
-        return g.substr(1); // ".kye"
+        return g.substr(1);
     }
     return "";
 }
@@ -492,37 +617,12 @@ static std::string safeJoinStrings(const char* a, const char* b) {
     return out;
 }
 
-static std::vector<fs::path> listDrivesWindows() {
-    std::vector<fs::path> drives;
-#ifdef _WIN32
-    DWORD mask = GetLogicalDrives();
-    for (char letter = 'A'; letter <= 'Z'; ++letter) {
-        if (mask & 1u) {
-            std::string root;
-            root += letter;
-            root += ":\\";
-            drives.emplace_back(root);
-        }
-        mask >>= 1u;
-    }
-#endif
-    return drives;
-}
-
 static void refreshListing(
     const fs::path& dir,
     const std::string& extFilter,
     std::vector<FileEntry>& out
 ) {
     out.clear();
-
-    // sur Windows: montrer drives si on est “au root conceptuel” vide (optionnel)
-    // Ici, on les montre toujours en “raccourcis” en haut.
-#ifdef _WIN32
-    for (const auto& d : listDrivesWindows()) {
-        out.push_back(FileEntry{ d.string(), d, true });
-    }
-#endif
 
     // parent dir shortcut
     if (dir.has_parent_path()) {
@@ -602,54 +702,86 @@ static void clampScroll(FileDialogState& st) {
     st.scroll = std::max(0, std::min(st.scroll, maxScroll));
 }
 
-// Rendu minimal sans texte (si tu n’as pas SDL_ttf).
-// -> On dessine juste des lignes + highlight.
-// Si tu as SDL_ttf, tu peux afficher st.items[i].name.
-static void renderSimple(FileDialogState& st, SDL_Renderer* r) {
-    // fond
-    SDL_Rect panel{ st.x, st.y, st.w, st.h };
+static void renderSimple(FileDialogState& st, SDL_Renderer* r)
+{
+    SDL_FRect panel{
+        (float)st.x, (float)st.y,
+        (float)st.w, (float)st.h
+    };
     SDL_SetRenderDrawColor(r, 20, 20, 22, 255);
     SDL_RenderFillRect(r, &panel);
-
-    // bordure
     SDL_SetRenderDrawColor(r, 120, 120, 130, 255);
-    SDL_RenderDrawRect(r, &panel);
+    SDL_RenderRect(r, &panel);
+    SDL_FRect list{
+        (float)(st.x + 10),
+        (float)(st.y + 50),
+        (float)(st.w - 20),
+        (float)(st.h - 100)
+    };
 
-    // zone liste
-    SDL_Rect list{ st.x + 10, st.y + 50, st.w - 20, st.h - 100 };
     SDL_SetRenderDrawColor(r, 30, 30, 34, 255);
     SDL_RenderFillRect(r, &list);
+
     SDL_SetRenderDrawColor(r, 80, 80, 90, 255);
-    SDL_RenderDrawRect(r, &list);
+    SDL_RenderRect(r, &list);
 
-    const int visibleRows = std::max(1, list.h / st.rowH);
-    const int end = std::min(static_cast<int>(st.items.size()), st.scroll + visibleRows);
+    const int visibleRows = std::max(1, (int)(list.h / st.rowH));
+    const int end = std::min((int)st.items.size(), st.scroll + visibleRows);
 
-    for (int i = st.scroll; i < end; ++i) {
+    for (int i = st.scroll; i < end; ++i)
+    {
         const int row = i - st.scroll;
-        SDL_Rect rowRect{ list.x, list.y + row * st.rowH, list.w, st.rowH };
+
+        SDL_FRect rowRect{
+            list.x,
+            list.y + row * st.rowH,
+            list.w,
+            (float)st.rowH
+        };
 
         if (i == st.selectedIndex) {
             SDL_SetRenderDrawColor(r, 70, 70, 90, 255);
             SDL_RenderFillRect(r, &rowRect);
         }
 
-        // petite icône à gauche: dossier / fichier
-        SDL_Rect icon{ rowRect.x + 6, rowRect.y + 4, 14, 14 };
-        if (st.items[i].isDir) SDL_SetRenderDrawColor(r, 180, 160, 60, 255);
-        else                   SDL_SetRenderDrawColor(r, 140, 140, 150, 255);
-        SDL_RenderFillRect(r, &icon);
+        // icône
+        SDL_FRect icon{
+            rowRect.x + 6.0f,
+            rowRect.y + 4.0f,
+            14.0f,
+            14.0f
+        };
 
-        // ligne séparatrice
+        if (st.items[i].isDir)
+            SDL_SetRenderDrawColor(r, 180, 160, 60, 255);
+        else
+            SDL_SetRenderDrawColor(r, 140, 140, 150, 255);
+        SDL_RenderFillRect(r, &icon);
         SDL_SetRenderDrawColor(r, 50, 50, 60, 255);
-        SDL_RenderDrawLine(r, rowRect.x, rowRect.y + st.rowH - 1, rowRect.x + rowRect.w, rowRect.y + st.rowH - 1);
+        SDL_RenderLine(
+            r,
+            rowRect.x,
+            rowRect.y + st.rowH - 1,
+            rowRect.x + rowRect.w,
+            rowRect.y + st.rowH - 1
+        );
     }
 
-    // boutons (juste rectangles)
-    SDL_Rect btnOk{ st.x + st.w - 180, st.y + st.h - 40, 80, 26 };
-    SDL_Rect btnCancel{ st.x + st.w - 90, st.y + st.h - 40, 80, 26 };
+    SDL_FRect btnOk{
+        (float)(st.x + st.w - 180),
+        (float)(st.y + st.h - 40),
+        80.0f, 26.0f
+    };
+
+    SDL_FRect btnCancel{
+        (float)(st.x + st.w - 90),
+        (float)(st.y + st.h - 40),
+        80.0f, 26.0f
+    };
+
     SDL_SetRenderDrawColor(r, 60, 90, 60, 255);
     SDL_RenderFillRect(r, &btnOk);
+
     SDL_SetRenderDrawColor(r, 120, 60, 60, 255);
     SDL_RenderFillRect(r, &btnCancel);
 }
@@ -688,10 +820,10 @@ bool fileOpenDialog_SDL(
     }
 
     // 2) input handling
-    if (e.type == SDL_MOUSEWHEEL) {
+    if (e.type == SDL_EVENT_MOUSE_WHEEL) {
         st.scroll -= e.wheel.y; // wheel up => y=+1
         clampScroll(st);
-    } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+    } else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) {
         const int idx = hitTestIndex(st, e.button.x, e.button.y);
         if (idx >= 0) {
             const uint32_t now = SDL_GetTicks();
@@ -737,8 +869,8 @@ bool fileOpenDialog_SDL(
                 }
             }
         }
-    } else if (e.type == SDL_KEYDOWN) {
-        switch (e.key.keysym.sym) {
+    } else if (e.type == SDL_EVENT_KEY_DOWN) {
+        switch (e.key.key) {
             case SDLK_ESCAPE:
                 st.initialized = false;
                 return false;
@@ -785,27 +917,35 @@ bool fileOpenDialog_SDL(
         }
     }
 
-    // 3) render
     renderSimple(st, renderer);
-    return false; // pas encore validé
+    return false;
 }
 
-static void drawFrame(SDL_Renderer* renderer, const SDL_Rect& r, bool selected) {
-    // brush_black vs brush_white -> on fait simple: noir si selected sinon blanc
-    if (selected) SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-    else          SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-
+void drawFrame(SDL_Renderer* renderer, const SDL_FRect& r, bool selected)
+{
+    if (selected)
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    else
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
     SDL_RenderRect(renderer, &r);
 
-    // INFLATERECT(-1,-1) => shrink de 1
-    SDL_Rect inner = r;
-    inner.x += 1; inner.y += 1;
-    inner.w -= 2; inner.h -= 2;
+    SDL_FRect inner = r;
+    inner.x += 1.0f;
+    inner.y += 1.0f;
+    inner.w -= 2.0f;
+    inner.h -= 2.0f;
 
     SDL_RenderRect(renderer, &inner);
 }
 
-static void cleanupAndExit(int exitCode)
+void releaseDialogResources(SDL_Texture* dialogTexture)
+{
+    if (dialogTexture) {
+        SDL_DestroyTexture(dialogTexture);
+    }
+}
+
+void cleanupAndExit(int exitCode)
 {
     if (g_renderer) { SDL_DestroyRenderer(g_renderer); g_renderer = nullptr; }
     if (g_window)   { SDL_DestroyWindow(g_window);     g_window = nullptr; }
@@ -824,12 +964,160 @@ void initTickCounter()
 
 void drawWhatDialogUI()
 {
-    SDL_Rect box { 200, 150, 400, 200 };
+    SDL_FRect box{
+        200.0f,
+        150.0f,
+        400.0f,
+        200.0f
+    };
+
     SDL_SetRenderDrawColor(g_renderer, 200, 200, 200, 255);
     SDL_RenderFillRect(g_renderer, &box);
 
     SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
     SDL_RenderRect(g_renderer, &box);
+}
 
-    // Texte à ajouter plus tard
+SpriteSheet loadBmpSheet(SDL_Renderer* r, const char* path, int tileW, int tileH) {
+    SpriteSheet s;
+    s.tileW = tileW;
+    s.tileH = tileH;
+
+    SDL_Surface* surf = SDL_LoadBMP(path);
+    if (!surf) throw std::runtime_error(std::string("SDL_LoadBMP failed: ") + SDL_GetError());
+
+    s.w = surf->w;
+    s.h = surf->h;
+
+    s.tex = SDL_CreateTextureFromSurface(r, surf);
+    SDL_DestroySurface(surf);
+
+    if (!s.tex) throw std::runtime_error(std::string("SDL_CreateTextureFromSurface failed: ") + SDL_GetError());
+    return s;
+}
+
+static void renderKyeTile()
+{
+    const int dstX = srcCol * cellWidth;
+    const int dstY = srcRow * cellHeight;
+
+    // Kye sprite position dans la sheet
+    constexpr int srcX = 0;
+    constexpr int srcY = 0;
+
+    g_blockSheet.blit16(dstX, dstY, srcX, srcY);
+}
+
+static void renderSparkle(float intensity)
+{
+    // intensity : 0.0 → 1.0
+    SDL_SetRenderDrawBlendMode(g_renderer, SDL_BLENDMODE_BLEND);
+
+    SDL_FRect rect;
+    rect.x = static_cast<float>(srcCol * cellWidth);
+    rect.y = static_cast<float>(srcRow * cellHeight);
+    rect.w = static_cast<float>(cellWidth);
+    rect.h = static_cast<float>(cellHeight);
+
+    Uint8 alpha = static_cast<Uint8>(255.0f * intensity);
+
+    SDL_SetRenderDrawColor(g_renderer, 255, 255, 255, alpha);
+    SDL_RenderFillRect(g_renderer, &rect);
+}
+
+void runTileSparkleEffect(int16_t effectId)
+{
+    constexpr int steps = 16;
+    constexpr float step = 1.0f / steps;
+
+    if (effectId == 1)
+    {
+        for (int i = steps; i >= 0; --i)
+        {
+            float intensity = i * step;
+
+            SDL_RenderClear(g_renderer);
+            renderKyeTile();
+            renderSparkle(intensity);
+            SDL_RenderPresent(g_renderer);
+
+            SDL_Delay(8);
+        }
+        return;
+    }
+
+    if (effectId == 2)
+    {
+        for (int i = 0; i <= steps; ++i)
+        {
+            float intensity = i * step;
+
+            SDL_RenderClear(g_renderer);
+            renderKyeTile();
+            renderSparkle(intensity);
+            SDL_RenderPresent(g_renderer);
+
+            SDL_Delay(8);
+        }
+        return;
+    }
+
+    // Redraw normal
+    renderKyeTile();
+    SDL_RenderPresent(g_renderer);
+}
+
+int showFileMessage(const char* message)
+{
+    const char* filename = std::strrchr(message, '\\');
+
+    if (filename)
+        filename++;
+    else
+        filename = message;
+
+    SDL_ShowSimpleMessageBox(
+        SDL_MESSAGEBOX_ERROR,
+        filename,
+        message,
+        g_window
+    );
+
+    return 0;
+}
+
+void drawText(int x, int y, const char* text, int len)
+{
+    if (!g_font || !text)
+        return;
+
+    SDL_Color color = {255, 255, 255, 255};
+
+    std::string str(text, len);
+
+    SDL_Surface* surface = TTF_RenderText_Blended(g_font, str.c_str(), str.size(), color);
+
+    if (!surface)
+        return;
+
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(g_renderer, surface);
+
+    SDL_FRect dst;
+    dst.x = (float)x;
+    dst.y = (float)y;
+    dst.w = (float)surface->w;
+    dst.h = (float)surface->h;
+
+    SDL_RenderTexture(g_renderer, texture, nullptr, &dst);
+
+    SDL_DestroyTexture(texture);
+    SDL_DestroySurface(surface);
+}
+
+SDL_Texture* loadTexture(SDL_Renderer* renderer, const char* path)
+{
+    SDL_Surface* surf = SDL_LoadBMP(path);
+    SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surf);
+    SDL_DestroySurface(surf);
+    return tex;
 }

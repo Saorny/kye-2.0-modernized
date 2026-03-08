@@ -3,13 +3,11 @@
 #include <iostream>
 #include <cstdint>
 #include <ctime>
-#include <dos.h>
 #include <cstdio>
 #include <vector>
 #include <string>
 #include <system_error>
 #include <cstddef>
-#include <windows.h>
 #include <tuple>
 #include <stdexcept>
 #include <cstring>
@@ -18,8 +16,58 @@
 #include "system.h"
 #include "util.h"
 #include "graph.h"
-#include "dialog.h"
 #include "game.h"
+
+static FileLike* findFreeFileSlot();
+
+static FileLike* prepareAndOpenFile(
+    FileLike* file,
+    uint16_t adviceType,
+    const char* mode,
+    const char* filepath
+);
+
+static FileOpenMode prepareFileInfo(
+    const char* mode,
+    uint16_t* attr,
+    uint16_t* flags
+);
+
+static int dosCreateFile(const char* filename, int attributes);
+static int openFileHandler(const std::string& filepath, uint16_t flags, bool create);
+static int validateFile(FileLike* file, int param);
+
+static int createFile(const char* filename, int attributes);
+static int openFile(const char* filename, uint16_t flags);
+static int closeFile(int fd);
+
+static int readTextBuffer(int fd, char* buffer, int size);
+static int writeTextBuffer(int fd, const char* buffer, uint16_t size);
+
+static int fillTextBuffer(FileLike* file);
+static int flushTextBuffer(FileLike* file);
+
+static int readLine(char* outputBuffer, int maxLen, FileLike* file);
+
+static int readFile(int fd, void* buffer, int size);
+static int writeFile(int fd, const void* buffer, int size);
+
+static int moveFilePointer(int fd);
+static int moveFilePointerExtended(int fd, int offset, int origin);
+
+static int fileAttrOp(const char* filename, int op, int attr);
+static bool testFileWriteability(int fd);
+
+static int freeLocalMemory(void* ptr);
+
+static void cleanupAllOpenFiles();
+
+static uint16_t writeStringAndAdvance(char*, const char*);
+static void callWithAudit(uint32_t);
+static void copySecondStringIntoFirst(char*, const char*);
+static void formatAndWriteDecimal(char, bool, int, uint32_t, char*);
+static int writeCharToFile(uint8_t, FileLike*);
+static uint16_t prepareAndRelease(void* dest, uint16_t value, uint16_t pad);
 
 namespace fs = std::filesystem;
 
@@ -245,7 +293,7 @@ int readLineToBuffer(FileLike *file, char *outBuf, int maxLen) {
 }
 
 void flushAllDirtyTextBuffers() {
-    FileLike* file = (FileLike*)0x0E76; // base address of file table
+    FileLike* file = fileTable; // base address of file table
     int count = 0x14; // 20 entries
 
     while (count--) {
@@ -389,7 +437,7 @@ int readLine(char* outputBuffer, int maxLen, FileLike* file) {
     *dst = '\0';
 
     if (file->flags & 0x10) return 0;
-    return reinterpret_cast<int>(outputBuffer);
+    return reinterpret_cast<std::intptr_t>(outputBuffer);
 }
 
 int flushAllTextBuffers() {
@@ -974,13 +1022,13 @@ uint16_t prepareAndRelease(void* ptr, uint16_t value, uint16_t fallback) {
     callWithAudit(result);
     copySecondStringIntoFirst(g_buffer1044, src);
 
-    return reinterpret_cast<uint16_t>(src);
+    return reinterpret_cast<uintptr_t>(src) & 0xFFFF;
 }
 
 uint16_t writeStringAndAdvance(char* dest, const char* src) {
     size_t len = std::strlen(src);
     copyMemory(dest, src, static_cast<uint16_t>(len + 1));
-    return reinterpret_cast<uint16_t>(dest + len);
+    return reinterpret_cast<uintptr_t>(dest + len) & 0xFFFF;
 }
 
 void copySecondStringIntoFirst(char* dest, const char* src) {
@@ -1220,18 +1268,18 @@ int writeMultiLineData(const char* str, FileLike* file) {
     return 1;
 }
 
-int findMappedValue(uint16_t seg, uint16_t ofs, uint8_t* outValue) {
-    for (int i = 0;; ++i) {
-        // Calcul de l'adresse de l'entrée i dans la table
-        uintptr_t base = reinterpret_cast<uintptr_t>(mappedTable) + i * 5;
+int findMappedValue(uint16_t seg, uint16_t ofs, uint8_t* outValue)
+{
+    for (int i = 0;; ++i)
+    {
+        const SegmentOffsetEntry& entry = mappedTable[i];
 
-        uint16_t entrySeg = *reinterpret_cast<uint16_t*>(base + 0x2C0);
-        if (entrySeg == 0xFFFF)
+        if (entry.segment == 0xFFFF)
             break;
 
-        uint16_t entryOfs = *reinterpret_cast<uint16_t*>(base + 0x2C2);
-        if (entrySeg == seg && entryOfs == ofs) {
-            *outValue = *reinterpret_cast<uint8_t*>(base + 0x2C4);
+        if (entry.segment == seg && entry.offset == ofs)
+        {
+            *outValue = entry.value;
             return 1;
         }
     }

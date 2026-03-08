@@ -8,7 +8,6 @@
 #include <string>
 #include <system_error>
 #include <cstddef>
-#include <windows.h>
 #include <tuple>
 #include <stdexcept>
 #include "graph.h"
@@ -20,8 +19,6 @@
 #include "system.h"
 #include "memory.h"
 
-std::unordered_map<int, std::ofstream> openFiles;
-
 int main(int argc, char** argv)
 {
     (void)argc;
@@ -31,7 +28,8 @@ int main(int argc, char** argv)
         return 255;
     }
 
-    if (!SDL_CreateWindowAndRenderer("Kye (Modern)", 1280, 720, 0, &g_window, &g_renderer)) {
+    if (SDL_CreateWindowAndRenderer("Kye (Modern)", 1280, 720, 0, &g_window, &g_renderer) != 0)
+    {
         SDL_Quit();
         return 255;
     }
@@ -51,6 +49,7 @@ int main(int argc, char** argv)
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            handleEvent(e);
             if (e.type == SDL_EVENT_QUIT) {
                 running = false;
                 exitCode = 0;
@@ -58,9 +57,10 @@ int main(int argc, char** argv)
         }
 
         processCallbackQueue(nullptr, nullptr);
-
+        SDL_SetRenderDrawColor(g_renderer, 0,0,0,255);
         SDL_RenderClear(g_renderer);
         SDL_RenderPresent(g_renderer);
+        SDL_Delay(16);
     }
 
     configureFileMode();

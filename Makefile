@@ -1,59 +1,129 @@
-CPP = g++
-CFLAGS = -g -O -std=gnu++11 -pedantic -Wall -Wno-uninitialized -datapath=./LEVEL -Wc++11-extensions
-CXXFLAGS = -std=gnu++11 -g -Og
+# ======================================
+# Compiler
+# ======================================
 
-CFLAGS += -I/usr/local/include/SDL2
+CXX = g++
 
-LDFLAGS += -L/usr/local/Cellar/sdl2/2.30.9/lib
+# ======================================
+# Target
+# ======================================
 
-SDL_LIBS = -lSDL2 -lSDL2_ttf
+TARGET = editor
 
-SRCS = main.cpp graph-lib.cpp sqx_encoder.cpp sqx_converter.cpp sqx_decoder.cpp game-file.cpp map.cpp editor.cpp
+# ======================================
+# Source files
+# ======================================
+
+SRCS = \
+main.cpp \
+graph.cpp \
+graph_globals.cpp \
+file.cpp \
+file_globals.cpp \
+game.cpp \
+game_globals.cpp \
+system.cpp \
+util.cpp \
+error.cpp \
+tinyfiledialogs.c
+
 OBJS = $(SRCS:.cpp=.o)
+OBJS := $(OBJS:.c=.o)
+
 DEPS = $(SRCS:.cpp=.d)
+DEPS := $(DEPS:.c=.d)
 
-OBJDIR = obj/sdl
+# ======================================
+# Compiler flags
+# ======================================
 
-editor: $(OBJS)
-	$(CPP) $(OBJS) -o $@ $(SDL_LIBS) $(CFLAGS) $(LDFLAGS)
+CXXFLAGS = -std=gnu++17 -Wall -Wextra -pedantic
 
-clean:
-	rm -f $(OBJS) $(DEPS) editor
+# Debug build
+DEBUGFLAGS = -g -O0
 
-reboot: clean editor
+# Release build
+RELEASEFLAGS = -O2
+
+# SDL flags via pkg-config
+SDL_CFLAGS = $(shell pkg-config --cflags sdl3 sdl3-ttf)
+SDL_LIBS   = $(shell pkg-config --libs sdl3 sdl3-ttf)
+
+CXXFLAGS += $(SDL_CFLAGS)
+
+# ======================================
+# Default target
+# ======================================
+
+all: debug
+
+# ======================================
+# Debug build
+# ======================================
+
+debug: CXXFLAGS += $(DEBUGFLAGS)
+debug: $(TARGET)
+
+# ======================================
+# Release build
+# ======================================
+
+release: CXXFLAGS += $(RELEASEFLAGS)
+release: $(TARGET)
+
+# ======================================
+# Linking
+# ======================================
+
+$(TARGET): $(OBJS)
+	$(CXX) $(OBJS) -o $@ $(SDL_LIBS) -lole32
+
+# ======================================
+# Compilation
+# ======================================
 
 %.o: %.cpp
-	$(CPP) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
-%i.d: %.cpp
-	$(CPP) $(CXXFLAGS) -MMD -MP $< -MF $@
+%.o: %.c
+	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
-release: $(OBJS)
-	# Create the app bundle structure
+# ======================================
+# Include dependencies
+# ======================================
+
+-include $(DEPS)
+
+# ======================================
+# Clean
+# ======================================
+
+clean:
+	rm -f $(OBJS) $(DEPS) $(TARGET)
+
+rebuild: clean all
+
+# ======================================
+# macOS app bundle
+# ======================================
+
+bundle: release
+
 	mkdir -p release/Contents/MacOS
 	mkdir -p release/Contents/Resources
 
-	# Copy the executable to the app bundle
-	cp editor release/Contents/MacOS/
+	cp $(TARGET) release/Contents/MacOS/
+	chmod +x release/Contents/MacOS/$(TARGET)
 
-	# Optionally, add icons or resources to the Resources folder
-	# cp my_icon.icns release/Contents/Resources/
-
-	# Now make the app executable
-	chmod +x release/Contents/MacOS/editor
-
-	# Create a basic Info.plist (you can customize this further)
 	echo '<?xml version="1.0" encoding="UTF-8"?>' > release/Contents/Info.plist
 	echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' >> release/Contents/Info.plist
 	echo '<plist version="1.0">' >> release/Contents/Info.plist
 	echo '<dict>' >> release/Contents/Info.plist
 	echo '  <key>CFBundleExecutable</key>' >> release/Contents/Info.plist
-	echo '  <string>editor</string>' >> release/Contents/Info.plist
+	echo '  <string>$(TARGET)</string>' >> release/Contents/Info.plist
 	echo '</dict>' >> release/Contents/Info.plist
 	echo '</plist>' >> release/Contents/Info.plist
 
-	# Make the app bundle discoverable by Finder
 	xattr -cr release
 
-	# Finished!
-	echo "App bundle created: release"
+	echo "App bundle created in ./release"

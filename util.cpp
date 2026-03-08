@@ -6,6 +6,9 @@
 #include <cstdint>
 #include <cstddef>
 #include "util.h"
+#include "game.h"
+
+uint32_t randomSeed = 0;
 
 int findIndexInTable(uint16_t value) {
     constexpr size_t kMaxEntries = 6;
@@ -29,31 +32,44 @@ bool isDiggerKeyword(const char* str) {
            str[5] == 'r';
 }
 
-void loadSpeedSettingFromEnvVar(char* shortCodeBuffer, char* speedDigitsBuffer) {
-    const char* envValue = getEnvVar("GAME_SPEED"); // 0x10EC
-    if (!envValue || strlen(envValue) < 4) {
-        // Valeur absente ou invalide → fallback
-        setDefaultSpeedSetting(shortCodeBuffer, speedDigitsBuffer);
-        return;
+static bool isAllDigits(std::string_view s) noexcept {
+    return !s.empty() && std::all_of(s.begin(), s.end(), [](char c){ return isDigit(c); });
+}
+
+
+inline bool isDigit(char c) {
+    return std::isdigit(static_cast<unsigned char>(c)) != 0;
+}
+
+static std::optional<int32_t> parseSignedInt32(std::string_view s)
+{
+    // trim minimal
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.remove_prefix(1);
+    while (!s.empty() && (s.back()  == ' ' || s.back()  == '\t')) s.remove_suffix(1);
+    if (s.empty()) return std::nullopt;
+
+    // signe optionnel
+    bool neg = false;
+    if (s.front() == '+' || s.front() == '-') {
+        neg = (s.front() == '-');
+        s.remove_prefix(1);
     }
+    if (s.empty() || !isAllDigits(s)) return std::nullopt;
 
-    // Validation simple : les 3 premiers doivent être alphanumériques, suivi d’un +, -, ou chiffre
-    if (!isalpha(envValue[0]) || !isalpha(envValue[1]) || !isalpha(envValue[2]) ||
-        !(isdigit(envValue[3]) || envValue[3] == '+' || envValue[3] == '-')) {
-        setDefaultSpeedSetting(shortCodeBuffer, speedDigitsBuffer);
-        return;
+    // parse safe
+    int64_t v = 0;
+    for (char c : s) {
+        v = v * 10 + (c - '0');
+        if (v > INT32_MAX) return std::nullopt;
     }
+    int32_t out = static_cast<int32_t>(v);
+    return neg ? -out : out;
+}
 
-    // Copie le shortCode (ex : "PE1") dans le buffer (max 3 lettres)
-    strncpy(shortCodeBuffer, envValue, 3);
-    shortCodeBuffer[3] = '\0';
-
-    // Récupère le chiffre (ex : "+20", "-5", "42")
-    int multiplier = atoi(envValue + 3);
-
-    // Multiplie ce chiffre par une constante (3600 ? vitesse de base)
-    int result = multiplier * 3600;
-    setSpeedMultiplier(result);  // Met à jour word_93F6, word_93F8, etc.
+static void setMultiplierFrom32(uint32_t value)
+{
+    speedMultiplierLow  = static_cast<uint16_t>( value        & 0xFFFFu);
+    speedMultiplierHigh = static_cast<uint16_t>((value >> 16) & 0xFFFFu);
 }
 
 const char* getEnvVar(const char* key) {
@@ -83,11 +99,6 @@ const char* getEnvVar(const char* key) {
     return nullptr;
 }
 
-void* fillMemory(void* dest, uint8_t value, uint16_t length) {
-    memsetOptimized(dest, length, value);
-    return dest;
-}
-
 void memsetOptimized(void* dest, uint16_t length, uint8_t value) {
     uint8_t* ptr = static_cast<uint8_t*>(dest);
 
@@ -112,6 +123,11 @@ void memsetOptimized(void* dest, uint16_t length, uint8_t value) {
     if (length & 1) {
         *ptr = value;
     }
+}
+
+void* fillMemory(void* dest, uint8_t value, uint16_t length) {
+    memsetOptimized(dest, length, value);
+    return dest;
 }
 
 std::size_t strlen16(const char* str) {
@@ -209,8 +225,16 @@ std::pair<uint16_t, uint16_t> divide64(
     };
 }
 
-void* allocateLocalMemory(uint16_t sizeInBytes) {
-    return LOCALALLOC(0, sizeInBytes);  // 0 = fixed allocation (non-moveable)
+[[nodiscard]] inline std::vector<std::byte> allocateLocalMemory(std::size_t sizeInBytes)
+{
+    // Remplace LocalAlloc: ownership clair, auto-free, zéro fuite
+    // Si tu veux du zero-init, vector le fait déjà (value-initialization des bytes -> 0)
+    try {
+        return std::vector<std::byte>(sizeInBytes);
+    } catch (const std::bad_alloc&) {
+        // équivalent "fail": tu peux choisir throw ou retourner vide
+        throw;
+    }
 }
 
 int32_t parseSignedDecimalString(const char* str) {
@@ -301,130 +325,6 @@ static inline std::uint16_t divide64_unsigned(std::uint64_t value)
     return static_cast<std::uint16_t>(value / 0x8000ull);
 }
 
-static int cStringLen(const char* s)
-{
-    int n = 0;
-    while (s && s[n] != '\0') ++n;
-    return n;
-}
-
-static inline uint8_t divmodSigned_u8(int64_t numer, int64_t denom, int64_t& outQuot)
-{
-    // x86 idiv: quotient trunc toward 0, remainder same sign as numer
-    const int64_t q = (denom != 0) ? (numer / denom) : 0;
-    const int64_t r = (denom != 0) ? (numer % denom) : 0;
-    outQuot = q;
-    return static_cast<uint8_t>(r & 0xFF);
-}
-
-static inline uint8_t divmodUnsigned_u8(uint64_t numer, uint64_t denom, uint64_t& outQuot)
-{
-    const uint64_t q = (denom != 0) ? (numer / denom) : 0;
-    const uint64_t r = (denom != 0) ? (numer % denom) : 0;
-    outQuot = q;
-    return static_cast<uint8_t>(r & 0xFF);
-}
-
-static inline bool geUnsigned64(uint64_t a, uint64_t b) { return a >= b; }
-
-static void copySuffixFromFirstDotIfNoWildcards(char* dst, const char* src)
-{
-    if (!dst || !src) return;
-
-    // 1) trouver le premier '.'
-    const char* dot = src;
-    while (*dot != '\0' && *dot != '.') {
-        ++dot;
-    }
-    if (*dot == '\0') {
-        return; // pas de '.'
-    }
-
-    // 2) refuser si wildcard dans le suffixe
-    if (std::strchr(dot, '*') != nullptr) return;
-    if (std::strchr(dot, '?') != nullptr) return;
-
-    // 3) copier le suffixe (inclut '.' et '\0')
-    std::strcpy(dst, dot);
-}
-
-static void splitPathDirAndName(char* dirOut, char* nameOut, const char* fullPath)
-{
-    if (!dirOut || !nameOut) return;
-    if (!fullPath) {
-        dirOut[0] = '\0';
-        nameOut[0] = '\0';
-        return;
-    }
-
-    const std::size_t len = std::strlen(fullPath);
-    const char* begin = fullPath;
-    const char* p = fullPath + len; // pointe sur '\0'
-
-    // Scan arrière pour trouver ':' ou '\\'
-    // (ASM utilise ANSIPREV pour DBCS; ici version simple 1-byte)
-    while (p > begin) {
-        --p;
-        if (*p == ':' || *p == '\\') break;
-    }
-
-    // Si rien trouvé
-    if (!(p >= begin && (*p == ':' || *p == '\\'))) {
-        std::strcpy(nameOut, fullPath);
-        dirOut[0] = '\0';
-        return;
-    }
-
-    // nameOut = après séparateur
-    std::strcpy(nameOut, p + 1);
-
-    // dirOut = fullPath tronqué juste après le séparateur
-    const std::size_t cut = static_cast<std::size_t>((p - begin) + 1);
-
-    // Copie entière puis tronque (comme l'ASM)
-    std::strcpy(dirOut, fullPath);
-    dirOut[cut] = '\0';
-}
-
-static void appendDefaultExtensionIfMissing(char* filenameBuf, const char* defaultExt)
-{
-    if (!filenameBuf || !defaultExt) return;
-
-    // 1) Cherche un '.' dans le nom
-    for (char* p = filenameBuf; *p != '\0'; ++p) {
-        if (*p == '.') {
-            return; // extension déjà présente -> no-op
-        }
-    }
-
-    // 2) Pas de '.' => concatène defaultExt à la fin
-    std::strcat(filenameBuf, defaultExt);
-}
-
-static bool containsWildcard(std::string_view s) {
-    return s.find('*') != std::string_view::npos || s.find('?') != std::string_view::npos;
-}
-
-static void ensureDefaultMask(OpenDialogState& st) {
-    st.selectedMask = "*.kye";
-}
-
-static void appendDefaultExtensionIfMissing(std::string& filename, std::string_view defaultExt) {
-    if (filename.find('.') != std::string::npos) return;
-    if (!defaultExt.empty() && defaultExt[0] != '.') {
-        filename.push_back('.');
-    }
-    filename.append(defaultExt);
-}
-
-static std::string joinPath(std::string_view dir, std::string_view name) {
-    if (dir.empty()) return std::string(name);
-    std::string out(dir);
-    if (out.back() != '\\' && out.back() != '/') out.push_back('\\');
-    out.append(name);
-    return out;
-}
-
 char* copyMemory(char* dest, const char* src, uint16_t size)
 {
     if (!dest || !src || size == 0) {
@@ -433,4 +333,25 @@ char* copyMemory(char* dest, const char* src, uint16_t size)
 
     std::memcpy(dest, src, static_cast<size_t>(size));
     return dest;
+}
+
+static std::mt19937 rng{ std::random_device{}() };
+
+uint16_t generateChangeSpeed()
+{
+    std::uniform_int_distribution<uint16_t> dist(0, 3);
+
+    return dist(rng);
+}
+
+
+bool isInsideGrid(int row, int col)
+{
+    return row >= 0 && row < GRID_ROWS &&
+           col >= 0 && col < GRID_COLS;
+}
+
+std::uint32_t getCellId(int row, int col)
+{
+    return static_cast<std::uint32_t>(row) * GRID_COLS + col;
 }
