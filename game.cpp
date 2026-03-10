@@ -445,6 +445,7 @@ void updateLivesDisplay()
 
 int loadLevelByIndex(int level)
 {
+    std::cout << "Loading " << g_selectedFilePath << ", level " << level << std::endl;
     if (!fileAccessEnabled) {
         return 0;
     }
@@ -1071,9 +1072,10 @@ void runLegacyCallbackQueue()
         {
             if (entry.state == 0xFF)
                 continue;
-
+            cout << "alpha" << endl;
             if (entry.priority <= bestPriority)
             {
+                cout << "bravo" << endl;
                 bestPriority = entry.priority;
                 best = &entry;
             }
@@ -1081,14 +1083,15 @@ void runLegacyCallbackQueue()
 
         if (!best)
             return;
-
+        cout << "charly" << endl;
         uint8_t state = best->state;
         best->state = 0xFF;
+        cout << "delta" << endl;
+        cout << "callback addr = " << std::hex << best->callback << endl;
+        if (!best->callback)
+            return;
 
-        if (state != 0)
-            best->callback();
-        else
-            best->callback();
+        best->callback();
     }
 }
 
@@ -1491,7 +1494,6 @@ void handleClickOnGridCell(std::uint32_t cellId)
             executeCurrentEntryAction(
                 g_entryRowTable[entryBase],
                 g_entryColTable[entryBase],
-                entryBase,
                 row,
                 col
             );
@@ -1991,7 +1993,9 @@ void animateLava()
     }
 }
 
-void animateDiamondsEvery10Frames()
+void drainPendingEvents() {}
+
+void animateDiamonds()
 {
     if (frameCounter % 10 != 0)
         return;
@@ -2227,7 +2231,7 @@ inline void spawnAtIfEmpty(int targetRow, int targetCol, int spawnTileId, uint16
 void updateLevelVisualsAndAnimations()
 {
     animateMonsters();
-    animateDiamondsEvery10Frames();
+    animateDiamonds();
     animateOneWayTilesEvery4Frames();
     tickSpawnersEvery7Frames();
     animateLava();
@@ -2264,7 +2268,7 @@ void animateMonsters()
     }
 }
 
-void handleDirectionalHotkeyAndAdvanceLevel(uint16_t key)
+void handleDirectionalHotkeyAndAdvanceLevel(SDL_Keycode key)
 {
     if (g_interactionMode != GameInteractionMode::NormalPlay)
         return;
@@ -2592,7 +2596,6 @@ void destroyGraphicsResources()
         }
     };
 
-    destroy(g_sheetFont.tex);
     destroy(g_sheetKye.tex);
     destroy(g_sheetMobiles.tex);
     destroy(g_sheetStatics.tex);
@@ -2761,8 +2764,8 @@ void invokeExternalCallback()
 void processCallbackQueueFromEngineEvent()
 {
     processCallbackQueue(
-        reinterpret_cast<uint16_t*>(&g_gameState),
-        reinterpret_cast<uint16_t*>(&g_gameState)
+        reinterpret_cast<CallbackQueueEntry*>(&g_gameState),
+        reinterpret_cast<CallbackQueueEntry*>(&g_gameState)
     );
 }
 

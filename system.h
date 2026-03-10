@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <unordered_map>
+#include <vector>
 
 struct DosDate {
     uint16_t year;
@@ -49,10 +50,12 @@ struct TimeParts {
 extern std::unordered_map<int, bool> g_isDeviceHandle;
 bool getAdviceInfo(int fd);
 
-int ioctl(int fd, uint8_t subfunction, uint16_t dxValue, uint16_t cxValue);
+int ioctl(int fd, int subfunction, int val1, int val2);
 void getCurrentDate(uint16_t* out);
 void getCurrentTime(uint16_t* out);
 void seedGameRNG(uint16_t seed);
 uint32_t computeTimestampNow(uint32_t* outTimestamp);
+
+extern const std::vector<const char*> environmentList;
 
 #endif // TIME_H

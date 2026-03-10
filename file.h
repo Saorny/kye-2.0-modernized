@@ -35,7 +35,7 @@ inline uint16_t& fdFlagsRef(int fd) { return g_fdFlags[static_cast<uint8_t>(fd)]
 struct FileLike {
     int16_t   bytesRead;     // 0x00
     uint16_t  flags;         // 0x02
-    uint8_t   fd;            // 0x04
+    int8_t    fd;            // 0x04
     uint8_t   pad;           // 0x05
     uint16_t  bufferSize;    // 0x06
     char*     buffer;        // 0x08
@@ -113,5 +113,17 @@ int findMatchingLineInFile(const std::string& target);
 
 FileLike* openAndPrepareFileFromSlot(const char* filepath, const char* modeStr);
 FileLike* openAndPrepareFileFromSlot(uint16_t filepathId, uint16_t modeId);
+int freeLocalMemory(void* ptr);
+int fileAttrOp(const char* filepath, uint8_t mode, uint16_t attr);
+int readFile(int fd, void* buffer, uint16_t size);
+int writeFile(int fd, const void* buffer, uint16_t size);
+int32_t moveFilePointerExtended(int fd, int32_t offset, uint8_t method);
+void formatAndWriteDecimal(
+    char baseChar,       // usually 'a'
+    bool isNegative,     // from arg_2
+    uint16_t radix,      // from arg_4 (e.g., 10)
+    uint32_t value,      // composed from arg_8:arg_A
+    char* dest           // output destination
+);
 
 #endif

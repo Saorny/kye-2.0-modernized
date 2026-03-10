@@ -104,7 +104,7 @@ static void initFileTableOnce()
     for (int i = 0; i < maxFileCount; ++i) {
         fileTable[i].self = &fileTable[i];
         // optional: mark as “unused”
-        fileTable[i].fd = 0xFF;
+        fileTable[i].fd = -1;
         fileTable[i].buffer = nullptr;
         fileTable[i].bufferCursor = nullptr;
         fileTable[i].bufferSize = 0;

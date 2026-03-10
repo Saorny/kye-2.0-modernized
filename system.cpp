@@ -16,10 +16,12 @@ static constexpr const char* SPEED_ENV_KEY = "KYE_SPEED"; // <-- à ajuster selo
 static constexpr uint16_t DEFAULT_SPEED_LOW  = 0x4650;    // ASM
 static constexpr uint16_t DEFAULT_SPEED_HIGH = 0x0000;    // ASM
 
+const uint8_t entityTable_10BC[] = {0};
+const std::vector<const char*> environmentList{};
+std::unordered_map<int, bool> g_isDeviceHandle{};
+
 char dst[4]  = {0};
 char dest[4] = {0};
-
-extern const std::vector<const char*> environmentList;
 
 bool setCurrentTimeRaw(const DosTimeRaw* time) {
     if (!time) return false;

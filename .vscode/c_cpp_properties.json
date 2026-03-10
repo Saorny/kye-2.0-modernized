@@ -8,7 +8,7 @@
       "cStandard": "c17",
       "includePath": [
         "${workspaceFolder}",
-        "${workspaceFolder}/SDL2/include"
+        "${workspaceFolder}/SDL3/include"
       ],
       "defines": ["_WIN32", "UNICODE", "_UNICODE"]
     }

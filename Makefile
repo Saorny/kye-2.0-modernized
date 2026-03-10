@@ -47,7 +47,7 @@ RELEASEFLAGS = -O2
 
 # SDL flags via pkg-config
 SDL_CFLAGS = $(shell pkg-config --cflags sdl3 sdl3-ttf)
-SDL_LIBS   = $(shell pkg-config --libs sdl3 sdl3-ttf)
+SDL_LIBS   = $(filter-out -mwindows,$(shell pkg-config --libs sdl3 sdl3-ttf)) -lcomdlg32
 
 CXXFLAGS += $(SDL_CFLAGS)
 

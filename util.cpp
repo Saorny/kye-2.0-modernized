@@ -10,6 +10,9 @@
 
 uint32_t randomSeed = 0;
 
+uint8_t charFlags[256] = {0};
+uint8_t table112E[6] = {0};
+
 int findIndexInTable(uint16_t value) {
     constexpr size_t kMaxEntries = 6;
     extern uint8_t table112E[];  // supposée déclarée ailleurs (à 0x112E)

@@ -30,7 +30,6 @@ int uiLeftY = 0;
 int uiBottomX = 0;
 int uiBottomY = 0;
 
-SpriteSheet g_sheetFont{};
 SpriteSheet g_sheetKye{};
 SpriteSheet g_sheetMobiles{};
 SpriteSheet g_sheetStatics{};
@@ -42,3 +41,4 @@ SDL_Texture* g_kyeTexture = nullptr;
 
 bool g_needsRedraw = false;
 char stringBuffer[512]{};
+

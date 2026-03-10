@@ -21,22 +21,29 @@
 
 int main(int argc, char** argv)
 {
-    (void)argc;
-    (void)argv;
+    cout << "Starting" << endl;
+    std::cout << "Available video drivers:" << std::endl;
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0) {
-        return 255;
-    }
-
-    if (SDL_CreateWindowAndRenderer("Kye (Modern)", 1280, 720, 0, &g_window, &g_renderer) != 0)
+    for (int i = 0; i < SDL_GetNumVideoDrivers(); ++i)
     {
+        std::cout << SDL_GetVideoDriver(i) << std::endl;
+    }
+    if (!SDL_Init(SDL_INIT_VIDEO))
+    {
+        std::cout << "SDL_Init failed: " << SDL_GetError() << std::endl;
+        return 1;
+    }
+    if (!SDL_CreateWindowAndRenderer("Kye (Modern)", 1280, 720, 0, &g_window, &g_renderer))
+    {
+        cout << "SDL window error: " << SDL_GetError() << endl;
         SDL_Quit();
         return 255;
     }
-
+    cout << "SDL Window Created!" << endl;
     initTickCounter();
-    runLegacyCallbackQueue(nullptr, nullptr);
-
+    cout << "runLegacyCallbackQueue" << endl;
+    runLegacyCallbackQueue();
+    cout << "initializeGameWindow" << endl;
     initializeGameWindow(1, 0, 0, 0, nullptr);
 
     drainPendingEvents();

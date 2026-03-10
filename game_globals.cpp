@@ -119,6 +119,7 @@ std::int16_t cellHeight = 16;
 // Game state
 // --------------------------------------------------
 GameState g_gameState{};
+GameState::GameState() {};
 
 // --------------------------------------------------
 // Environment
@@ -178,4 +179,50 @@ SDL_Window* g_windowHandle2 = nullptr;
 SDL_Window* g_toolboxWindow = nullptr;
 SDL_Renderer* g_toolboxRenderer = nullptr;
 bool toolboxCreated = false;
-std::array<CallbackEntry, MAX_CALLBACKS> g_callbackQueue{};
+std::array<CallbackEntry, MAX_CALLBACKS> g_callbackQueue;
+
+struct InitCallbackQueue {
+    InitCallbackQueue() {
+        for (auto& e : g_callbackQueue) {
+            e.state = 0xFF;
+            e.priority = 0;
+            e.callback = nullptr;
+        }
+    }
+} initCallbackQueue;
+
+
+SpriteSheet16 g_blockSheet{};
+
+const char* hudMessageText = "";
+int uiRightX = 0;
+
+std::string g_levelInput;
+
+SDL_FRect g_mainRect{};
+
+std::vector<Spawner> g_spawners;
+
+const uint16_t g_table10C6[] = {0};
+const uint16_t g_table10C8[] = {0};
+
+const DecodeTileEntry g_decodeTileTable[] = {
+    {0,0,0}
+};
+
+const char* kDefaultStatusLine = "";
+const char* kDefaultHintText = "";
+const char* kDefaultLevelName = "";
+
+std::string g_levelDisplayText;
+std::string g_levelRawText;
+std::string g_levelHintText;
+
+uint8_t g_notificationHandlerParam[1] = {0};
+uint16_t g_notificationHandlerSlotWord[1] = {0};
+
+int stringBufferCapacity = 512;
+
+int g_entryRowTable[1] = {0};
+int g_entryColTable[1] = {0};
+int g_entryEnabledTable[1] = {0};

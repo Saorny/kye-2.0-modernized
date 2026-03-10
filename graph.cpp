@@ -69,7 +69,8 @@ bool loadSpriteSheets()
     g_sheetKye      = loadBmpSheet(g_renderer, "graph/graph_kye.bmp",      16, 16);
     g_sheetMobiles  = loadBmpSheet(g_renderer, "graph/graph_mobiles.bmp",  16, 16);
     g_sheetStatics  = loadBmpSheet(g_renderer, "graph/graph_statics.bmp",  16, 16);
-    g_sheetFont     = loadBmpSheet(g_renderer, "graph/font.bmp",           8, 16);
+    // g_sheetFont     = loadBmpSheet(g_renderer, "graph/font.bmp",           8, 16);
+    TTF_Font* font = TTF_OpenFont("graph/font.otf", 16);
 
     return true;
 }
@@ -303,15 +304,7 @@ void showDialog(const char* dialogId, VoidCallback onOk)
         30.f
     };
 
-    // On stocke le callback
-    if (onOk)
-    {
-        g_callbackQueue[0] = {
-            0,
-            0,
-            onOk
-        };
-    }
+    reinterpret_cast<uintptr_t>(onOk);
 }
 
 static SDL_Rect makeRectLTRB(int l, int t, int r, int b) {
@@ -551,42 +544,38 @@ void renderHudAndFrame()
 
 void drawTextAt(int16_t x, int16_t y, const char* text, int length)
 {
-    if (!g_renderer || !g_sheetFont.tex || !text || length <= 0)
+    if (!g_renderer || !g_font || !text || length <= 0)
         return;
 
-    constexpr int glyphW = 8;
-    constexpr int glyphH = 16;
-    constexpr int firstChar = 32;      // ASCII space
-    constexpr int glyphsPerRow = 16;   // 16 colonnes dans la sheet
+    std::string str(text, length);
 
-    for (int i = 0; i < length; ++i)
-    {
-        unsigned char c = static_cast<unsigned char>(text[i]);
+    SDL_Color color{0,0,0,255};
 
-        if (c < firstChar)
-            continue;
+    SDL_Surface* surface = TTF_RenderText_Blended(
+        g_font,
+        str.c_str(),
+        str.length(),
+        color
+    );
+    if (!surface)
+        return;
 
-        int index = c - firstChar;
+    SDL_Texture* tex = SDL_CreateTextureFromSurface(g_renderer, surface);
+    SDL_DestroySurface(surface);
 
-        int srcCol = index % glyphsPerRow;
-        int srcRow = index / glyphsPerRow;
+    if (!tex)
+        return;
 
-        SDL_FRect src{
-            static_cast<float>(srcCol * glyphW),
-            static_cast<float>(srcRow * glyphH),
-            static_cast<float>(glyphW),
-            static_cast<float>(glyphH)
-        };
+    SDL_FRect dst{
+        static_cast<float>(x),
+        static_cast<float>(y),
+        static_cast<float>(surface->w),
+        static_cast<float>(surface->h)
+    };
 
-        SDL_FRect dst{
-            static_cast<float>(x + i * glyphW),
-            static_cast<float>(y),
-            static_cast<float>(glyphW),
-            static_cast<float>(glyphH)
-        };
+    SDL_RenderTexture(g_renderer, tex, nullptr, &dst);
 
-        SDL_RenderTexture(g_renderer, g_sheetFont.tex, &src, &dst);
-    }
+    SDL_DestroyTexture(tex);
 }
 
 static bool endsWithCaseInsensitive(const std::string& s, const std::string& suffix) {
@@ -1007,6 +996,8 @@ static void renderKyeTile()
 
     g_blockSheet.blit16(dstX, dstY, srcX, srcY);
 }
+
+void SpriteSheet16::blit16(int,int,int,int) {}
 
 static void renderSparkle(float intensity)
 {

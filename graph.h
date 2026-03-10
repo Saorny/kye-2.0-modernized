@@ -94,7 +94,8 @@ struct SpriteSheet {
     int tileH = 16;
 };
 
-extern SpriteSheet g_sheetFont;
+extern TTF_Font *g_sheetFont;
+// extern SpriteSheet g_sheetFont;
 extern SpriteSheet g_sheetKye;   // graph_kye.bmp
 extern SpriteSheet g_sheetMobiles;  // graph_mobiles.bmp
 extern SpriteSheet g_sheetStatics;   // graph_statiscs.bmp

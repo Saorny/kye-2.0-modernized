@@ -49,23 +49,14 @@ static int flushTextBuffer(FileLike* file);
 
 static int readLine(char* outputBuffer, int maxLen, FileLike* file);
 
-static int readFile(int fd, void* buffer, int size);
-static int writeFile(int fd, const void* buffer, int size);
-
 static int moveFilePointer(int fd);
-static int moveFilePointerExtended(int fd, int offset, int origin);
 
-static int fileAttrOp(const char* filename, int op, int attr);
 static bool testFileWriteability(int fd);
-
-static int freeLocalMemory(void* ptr);
-
 static void cleanupAllOpenFiles();
 
 static uint16_t writeStringAndAdvance(char*, const char*);
 static void callWithAudit(uint32_t);
 static void copySecondStringIntoFirst(char*, const char*);
-static void formatAndWriteDecimal(char, bool, int, uint32_t, char*);
 static int writeCharToFile(uint8_t, FileLike*);
 static uint16_t prepareAndRelease(void* dest, uint16_t value, uint16_t pad);
 
@@ -77,11 +68,6 @@ static constexpr int kOff_0xCD  = 0xCD;
 static constexpr int kOff_0x23  = 0x23;
 static constexpr int kOff_0x78  = 0x78;
 static constexpr int kBlockSize = kOff_0xCD + (kLines * kLineSize);
-
-int findMatchingLineInFile(const std::string& target)
-{
-    return findMatchingLineInFile(target.c_str());
-}
 
 int findMatchingLineInFile(const char* targetString) {
     if (fileAccessEnabled == 0)
@@ -140,38 +126,50 @@ FileLike* findFreeFileSlot() {
 }
 
 
-FileLike* prepareAndOpenFile(FileLike* file, uint16_t openFlags, const char* adviceType, const char* filepath) {
+FileLike* prepareAndOpenFile(FileLike* file, uint16_t openFlags, const char* adviceType, const char* filepath)
+{
     if (!file) return nullptr;
 
     uint16_t requestedFlags = 0;
     uint16_t attributeFlags = 0;
-    int mode = prepareFileInfo(adviceType, &attributeFlags, &requestedFlags); 
-    file->flags = mode;
 
-    if (mode == 0 || file->fd >= 0) {
+    int mode = prepareFileInfo(adviceType, &attributeFlags, &requestedFlags);
+    file->flags = static_cast<uint16_t>(mode);
+
+    if (mode == 0)
+    {
         file->fd = -1;
         file->flags = 0;
         return nullptr;
     }
 
-    int finalFlags = attributeFlags | openFlags;
-    int handle = openFileHandler(filepath, finalFlags, (finalFlags & 0x00F0) != 0);
-    if (handle < 0) {
-        file->fd = -1;
-        file->flags = 0;
-        return nullptr;
+    if (file->fd < 0)
+    {
+        int finalFlags = attributeFlags | openFlags;
+
+        int handle = openFileHandler(filepath, finalFlags, (finalFlags & 0x00F0) != 0);
+
+        file->fd = static_cast<int8_t>(handle);
+
+        if (handle < 0)
+        {
+            file->fd = -1;
+            file->flags = 0;
+            return nullptr;
+        }
     }
 
-    file->fd = static_cast<uint8_t>(handle);
+    int fd = static_cast<int>(file->fd);
 
-    if (getAdviceInfo(handle)) {
+    if (getAdviceInfo(fd))
+    {
         file->flags |= 0x0200;
     }
 
-    bool needsInit = (file->flags & 0x0200);
-    int param = needsInit ? 1 : 0;
+    int param = (file->flags & 0x0200) ? 1 : 0;
 
-    if (validateFile(file, param) != 0) {
+    if (validateFile(file, param) != 0)
+    {
         cleanFile(file);
         return nullptr;
     }
@@ -996,7 +994,7 @@ int cleanFile(FileLike* file) {
         file->flags = 0;
         file->bufferSize = 0;
         file->bytesRead = 0;
-        file->fd = 0xFF;
+        file->fd = -1;
 
         if (file->pad != 0) {
             prepareAndRelease(0, 0, file->pad);
@@ -1009,12 +1007,12 @@ int cleanFile(FileLike* file) {
 }
 
 int freeLocalMemory(void* ptr) {
-    return 0;
+     free(ptr);
+     return 0;
 }
 
 uint16_t prepareAndRelease(void* ptr, uint16_t value, uint16_t fallback) {
     const char* src = (fallback != 0) ? reinterpret_cast<const char*>(fallback) : reinterpret_cast<const char*>(0x2ED2);
-    uint16_t ax = (value != 0) ? value : 0x1040;
 
     char* dest = reinterpret_cast<char*>(ptr);
     uint16_t result = writeStringAndAdvance(dest, src);
@@ -1075,7 +1073,7 @@ int fallbackWriteChar(uint8_t c, FileLike* file) {
 
 int writeCharToFile(uint8_t c, FileLike* file) {
     lastWrittenChar = c;
-    if (file->bytesRead != 0xFFFF) {
+    if (file->bytesRead != -1) {
         if (file->buffer) {
             *(file->buffer++) = c;
             file->bytesRead++;
@@ -1182,9 +1180,8 @@ int writeBufferToFile(FileLike* file, int size, const uint8_t* buffer) {
         }
     }
 
-    // Fallback buffered mode (not text, not direct)
     while (size-- > 0) {
-        if (++file->bytesRead < 0xFFFF) {
+        if (++file->bytesRead < -1) {
             *file->buffer++ = *buffer++;
         } else {
             file->bytesRead--;
@@ -1289,7 +1286,6 @@ int findMappedValue(uint16_t seg, uint16_t ofs, uint8_t* outValue)
 
 void generateMappedLine(uint16_t index, uint8_t* outputBuffer) {
     uint16_t offset = 0;
-    uint16_t value = 0;
     uint8_t mappedValue = 0;
 
     uint16_t counter = 0;
@@ -1336,7 +1332,7 @@ static void copyZ(char* dst, size_t dstCap, const char* src)
     dst[dstCap - 1] = '\0';
 }
 
-void generateFileFromMappedData(uint16_t /*indexUnused*/)
+void generateFileFromMappedData()
 {
     std::array<char, kBlockSize> block{};
     char* base = block.data();

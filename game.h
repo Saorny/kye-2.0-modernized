@@ -15,6 +15,7 @@
 #include <optional>
 #include <SDL3/SDL.h>
 #include <unordered_map>
+#include <iostream>
 
 #include "file.h"
 
@@ -317,10 +318,10 @@ extern int matchedEntryCount;
 void resetLevelStateMemory();
 void startPollingTimer();
 
-void runLegacyCallbackQueue(CallbackQueueEntry* begin,
-                            CallbackQueueEntry* end);
+void runLegacyCallbackQueue();
 
-void processCallbackQueue(uint16_t* start, uint16_t* end);
+void processCallbackQueue(CallbackQueueEntry* start,
+                          CallbackQueueEntry* end);
 void processCallbackQueueFromEngineEvent();
 
 void configureFileMode();
@@ -335,6 +336,8 @@ void handleEvent(const SDL_Event& e);
 int renderLivesAndLevelInfo();
 void renderFrameByInteractionMode();
 void handleDialogClose(NewLevelDialogResult result);
+
+using namespace std;
 
 // =====================
 // Tables externes
@@ -462,12 +465,16 @@ enum NotificationCode
 extern const std::unordered_map<int, NotificationEntry> notifications;
 extern SDL_Cursor* g_cursorArrow;
 
+typedef void (*VoidCallback)();
+
+#pragma pack(push,1)
 struct CallbackEntry
 {
-    uint8_t  state;      // 0 = near call, 1 = far call, 0xFF = empty
-    uint8_t  priority;
-    void (*callback)();
+    uint8_t state;
+    uint8_t priority;
+    VoidCallback callback;
 };
+#pragma pack(pop)
 
 constexpr int MAX_CALLBACKS = 32;
 
@@ -509,18 +516,22 @@ void processKyeCollision(int row, int col);
 void handleEngineEvent(uint16_t, uint16_t, uint16_t);
 void cleanupAndTerminate(int code);
 void handleUnknownEntityType(int entityIndex);
-void setStatusText(const char*);
+void setStatusText(const std::string& text);
 void handleClickOnGridCell(uint32_t);
 void updateGridCell(int row, int col);
-void executeCurrentEntryAction(int,int,int,int,int);
+void executeCurrentEntryAction(std::int16_t actionType,
+                               std::int16_t tileId,
+                               std::int16_t row,
+                               std::int16_t col);
 int handleStandardCellClick(int row,int col);
 void handleSpecialSentinelClick();
-void renderWallTile(int row,int col,int tile);
+void renderWallTile(int row, int col, uint16_t tileValue);
 void spawnAtIfEmpty(int,int,int,uint16_t&);
 void animateMonsters();
 void invalidateWindow();
 void updateWindow();
 void gameMainLoopTick();
 int tickLevelFlow();
+void animateDiamonds();
 
 #endif // GAME_H
