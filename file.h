@@ -102,7 +102,7 @@ extern char g_selectedFilePath[260]; //DS:01A0
 
 // Functions
 int cleanFile(FileLike* file);
-int readStructuredBlock(FileLike* file, char* outBuf);
+int loadLevelMetaData(FileLike* file, char* outBuf);
 int readLineToBuffer(FileLike* file, char* outBuf, int maxLen);
 
 int resetAndSeekFile(FileLike* file, int mode);               // legacy
@@ -118,6 +118,7 @@ int fileAttrOp(const char* filepath, uint8_t mode, uint16_t attr);
 int readFile(int fd, void* buffer, uint16_t size);
 int writeFile(int fd, const void* buffer, uint16_t size);
 int32_t moveFilePointerExtended(int fd, int32_t offset, uint8_t method);
+int openFileHandler(const std::string& filepath, uint16_t flags);
 void formatAndWriteDecimal(
     char baseChar,       // usually 'a'
     bool isNegative,     // from arg_2

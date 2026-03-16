@@ -31,34 +31,13 @@ void maybeDrawPendingRectangle()
 {
     if (isPendingDraw)
     {
-        if (gameGrid[pendingRow][pendingCol] == CELL_FLAG_EMPTY)
+        if (g_gameState.tileMap[pendingRow][pendingCol] == EntityType::EMPTY_CELL)
         {
             drawRectangleFromGrid(pendingRow, pendingCol);
         }
     }
 
     isPendingDraw = false;
-}
-
-static SDL_FRect spriteSrcRect(int tileIndex, int atlasW, int atlasH, int cellW, int cellH) {
-    const int cols = (cellW > 0) ? (atlasW / cellW) : 0;
-    if (cols <= 0) return SDL_FRect{0,0,0,0};
-
-    const int x = (tileIndex % cols) * cellW;
-    const int y = (tileIndex / cols) * cellH;
-    return SDL_FRect{ (float)x, (float)y, (float)cellW, (float)cellH };
-}
-
-static void drawTile(SDL_Renderer* r,
-                     SDL_Texture* atlas,
-                     int atlasW,
-                     int tileIndex,
-                     int cellW, int cellH,
-                     float xDst, float yDst)
-{
-    SDL_FRect src = spriteSrcRect(tileIndex, atlasW, /*atlasH unused*/0, cellW, cellH);
-    SDL_FRect dst{ xDst, yDst, (float)cellW, (float)cellH };
-    SDL_RenderTexture(r, atlas, &src, &dst);
 }
 
 bool loadSpriteSheets()
@@ -70,8 +49,13 @@ bool loadSpriteSheets()
     g_sheetMobiles  = loadBmpSheet(g_renderer, "graph/graph_mobiles.bmp",  16, 16);
     g_sheetStatics  = loadBmpSheet(g_renderer, "graph/graph_statics.bmp",  16, 16);
     // g_sheetFont     = loadBmpSheet(g_renderer, "graph/font.bmp",           8, 16);
-    TTF_Font* font = TTF_OpenFont("graph/font.otf", 16);
-
+    // TTF_Font* font = TTF_OpenFont("graph/font.otf", 16);
+    g_font = TTF_OpenFont("graph/font.otf", 16);
+    std::cout << "Statics sheet size = "
+          << g_sheetStatics.w << " x "
+          << g_sheetStatics.h << std::endl;
+    SDL_SetTextureScaleMode(g_sheetStatics.tex, SDL_SCALEMODE_NEAREST);
+    SDL_SetTextureBlendMode(g_sheetStatics.tex, SDL_BLENDMODE_BLEND);
     return true;
 }
 
@@ -130,23 +114,20 @@ void showMessage(const char* caption, const char* message)
 
 void drawRectangleFromGrid(int row, int col)
 {
-    // 1) dirty mark (adapte sur TON buffer)
-    // ex: g_gridAuxA[row][col] = CELL_FLAG_EMPTY; // 0xFFFF
-    g_gridAuxA[row][col] = static_cast<int16_t>(0xFFFF);
+    g_gameState.tileMap[row][col] = EntityType::EMPTY_CELL;
 
-    // 2) coords pixels
     const int x0 = gridOriginX + col * cellWidth;
     const int y0 = gridOriginY + row * cellHeight;
 
-    SDL_FRect r;
-    r.x = static_cast<float>(x0);
-    r.y = static_cast<float>(y0);
-    r.w = static_cast<float>(cellWidth);
-    r.h = static_cast<float>(cellHeight);
+    SDL_FRect r{
+        (float)x0,
+        (float)y0,
+        (float)cellWidth,
+        (float)cellHeight
+    };
 
-    // “pen_gray” → tu choisis une couleur (gris)
-    SDL_SetRenderDrawColor(g_renderer, 128, 128, 128, 255);
-    SDL_RenderRect(g_renderer, &r);
+    SDL_SetRenderDrawColor(g_renderer, 255,255,255,255); // blanc
+    SDL_RenderFillRect(g_renderer, &r);
 }
 
 static const char* getLegacyString(uint16_t offset) {
@@ -269,7 +250,7 @@ int initializeGameWindow(
     if (!isDiggerKeyword(windowTitle)) {
         showWhatDialog();
     }
-
+    std::cout << "Statics texture = " << g_sheetStatics.tex << std::endl;
     return 1;
 }
 
@@ -359,7 +340,7 @@ void initializeLayoutRects() {
     );
 }
 
-void renderEntityToSdl(int16_t entityIndex)
+void renderEntity(int entityIndex)
 {
     if (entityIndex < 0 ||
         entityIndex >= static_cast<int16_t>(g_gameState.entities.size()) ||
@@ -368,7 +349,7 @@ void renderEntityToSdl(int16_t entityIndex)
         return;
     }
 
-    const EntityActionStruct& entity =
+    const EntityInfo& entity =
         g_gameState.entities[entityIndex];
 
     const int type = static_cast<int>(entity.entityType);
@@ -385,17 +366,18 @@ void renderEntityToSdl(int16_t entityIndex)
 
     if (type >= 0x0F && type <= 0x13)
     {
-        srcX = static_cast<float>(entity.timer * 16);
-        srcY = static_cast<float>(type * 16);
+        srcX = static_cast<float>(type * 0x10);
+        // srcY = static_cast<float>(type * 16);
+         srcY = 16.0f;
     }
     else if (type >= 0x32 && type <= 0x3B)
     {
-        srcX = static_cast<float>(type * 16);
+        srcX = static_cast<float>(type * 0x10);
         srcY = 16.0f;
     }
     else
     {
-        srcX = static_cast<float>(type * 16);
+        srcX = static_cast<float>(type * 0x10);
         srcY = 0.0f;
     }
 
@@ -489,23 +471,23 @@ GridCellRect computeHudCellRectFromIndex(std::int16_t cellIndex)
     };
 }
 
-void renderFrame()
-{
-    if (g_isRendering) {
-        advanceToNextLevelOrBlock();
-        return;
-    }
+// void renderFrame()
+// {
+//     if (g_isRendering)
+//         return;
 
-    g_isRendering = true;
+//     g_isRendering = true;
 
-    initializeLayoutRects();
-    renderHudAndFrame();
+//     SDL_SetRenderDrawColor(g_renderer, 0,0,0,255);
+//     SDL_RenderClear(g_renderer);   // ← MANQUANT
 
-    SDL_RenderPresent(g_renderer);
+//     initializeLayoutRects();
+//     renderHudAndFrame();
 
-    g_isRendering = false;
-}
+//     SDL_RenderPresent(g_renderer);
 
+//     g_isRendering = false;
+// }
 
 static inline void setDrawColorPenBlack() { SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255); }
 static inline void setDrawColorPenGray()  { SDL_SetRenderDrawColor(g_renderer, 128, 128, 128, 255); }
@@ -539,7 +521,7 @@ void renderHudAndFrame()
     const int hudLen = (int)SDL_strlen(hudText);
     drawTextAt((int16_t)(uiLeftX + 4), (int16_t)uiTopY, hudText, hudLen);
     SDL_SetRenderDrawColor(g_renderer, oldR, oldG, oldB, oldA);
-    renderFrameByInteractionMode();
+    renderAllObjects();
 }
 
 void drawTextAt(int16_t x, int16_t y, const char* text, int length)
@@ -967,7 +949,8 @@ void drawWhatDialogUI()
     SDL_RenderRect(g_renderer, &box);
 }
 
-SpriteSheet loadBmpSheet(SDL_Renderer* r, const char* path, int tileW, int tileH) {
+SpriteSheet loadBmpSheet(SDL_Renderer* r, const char* path, int tileW, int tileH)
+{
     SpriteSheet s;
     s.tileW = tileW;
     s.tileH = tileH;
@@ -978,10 +961,20 @@ SpriteSheet loadBmpSheet(SDL_Renderer* r, const char* path, int tileW, int tileH
     s.w = surf->w;
     s.h = surf->h;
 
-    s.tex = SDL_CreateTextureFromSurface(r, surf);
+    std::cout << "Loaded BMP: " << path
+              << " surface=" << surf
+              << " w=" << s.w
+              << " h=" << s.h << std::endl;
+
+    SDL_Surface* converted = SDL_ConvertSurface(surf, SDL_PIXELFORMAT_RGBA32);
+
+    s.tex = SDL_CreateTextureFromSurface(r, converted);
+
+    SDL_DestroySurface(converted);
     SDL_DestroySurface(surf);
 
     if (!s.tex) throw std::runtime_error(std::string("SDL_CreateTextureFromSurface failed: ") + SDL_GetError());
+
     return s;
 }
 
@@ -1016,48 +1009,6 @@ static void renderSparkle(float intensity)
     SDL_RenderFillRect(g_renderer, &rect);
 }
 
-void runTileSparkleEffect(int16_t effectId)
-{
-    constexpr int steps = 16;
-    constexpr float step = 1.0f / steps;
-
-    if (effectId == 1)
-    {
-        for (int i = steps; i >= 0; --i)
-        {
-            float intensity = i * step;
-
-            SDL_RenderClear(g_renderer);
-            renderKyeTile();
-            renderSparkle(intensity);
-            SDL_RenderPresent(g_renderer);
-
-            SDL_Delay(8);
-        }
-        return;
-    }
-
-    if (effectId == 2)
-    {
-        for (int i = 0; i <= steps; ++i)
-        {
-            float intensity = i * step;
-
-            SDL_RenderClear(g_renderer);
-            renderKyeTile();
-            renderSparkle(intensity);
-            SDL_RenderPresent(g_renderer);
-
-            SDL_Delay(8);
-        }
-        return;
-    }
-
-    // Redraw normal
-    renderKyeTile();
-    SDL_RenderPresent(g_renderer);
-}
-
 int showFileMessage(const char* message)
 {
     const char* filename = std::strrchr(message, '\\');
@@ -1075,6 +1026,85 @@ int showFileMessage(const char* message)
     );
 
     return 0;
+}
+
+void renderSparkleTileAndPresent(int sparkleCount)
+{
+    if (!g_renderer)
+        return;
+    cout << "src (" << srcRow << ";" << srcCol << ")" << endl;
+    cout << "kye (" << kyeRow << ";" << kyeCol << ")" << endl;
+    SDL_FRect dst{
+        float(gridOriginX + srcRow * cellWidth),
+        float(gridOriginY + srcCol * cellHeight),
+        float(cellWidth),
+        float(cellHeight)
+    };
+    SDL_FRect src{
+        0.0f,
+        0.0f,
+        16.0f,
+        16.0f
+    };
+
+    // draw Kye
+    SDL_RenderTexture(g_renderer, g_sheetKye.tex, &src, &dst);
+
+    // sparkle pixels
+    SDL_SetRenderDrawColor(g_renderer, 255,255,255,255);
+
+    for (int i = 0; i < sparkleCount; i++)
+    {
+        int px = srcCol * cellWidth  + (rand() & 15);
+        int py = srcRow * cellHeight + (rand() & 15);
+
+        SDL_RenderPoint(g_renderer, px, py);
+    }
+
+    SDL_RenderPresent(g_renderer);
+}
+
+void runTileSparkleEffect(int effectId)
+{
+    if (!g_renderer)
+        return;
+
+    if (effectId == 1)
+    {
+        int sparkle = 0x100;
+
+        while (sparkle >= 0)
+        {
+            renderSparkleTileAndPresent(sparkle);
+            sparkle -= 16;
+        }
+
+        return;
+    }
+
+    if (effectId == 2)
+    {
+        for (int sparkle = 0; sparkle < 0x100; sparkle += 16)
+        {
+            renderSparkleTileAndPresent(sparkle);
+        }
+
+        return;
+    }
+    SDL_FRect src{
+        0.0f,
+        0.0f,
+        16.0f,
+        16.0f
+    };
+    SDL_FRect dst{
+        float(srcCol * cellWidth),
+        float(srcRow * cellHeight),
+        float(cellWidth),
+        float(cellHeight)
+    };
+
+    SDL_RenderTexture(g_renderer, g_sheetKye.tex, &src, &dst);
 }
 
 void drawText(int x, int y, const char* text, int len)

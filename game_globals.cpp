@@ -41,19 +41,19 @@ char g_defaultOpenSuffix[0x40] = {};
 // --------------------------------------------------
 uint16_t cursorRow = 0;
 uint16_t cursorCol = 0;
-uint16_t spawnRow = 0;
-uint16_t spawnCol = 0;
+uint16_t kyeRow = 0;
+uint16_t kyeCol = 0;
 
-uint16_t selectedTileValue = 0;
-uint16_t selectionState = 0;
-uint16_t selectedEntityIndex = 0;
+EntityType selectedTileValue = EntityType::EMPTY_CELL;
+EntityType selectionState = EntityType::EMPTY_CELL;
+EntityType selectedEntityIndex = EntityType::EMPTY_CELL;
 
 // --------------------------------------------------
 // Exit / tile sentinels
 // --------------------------------------------------
-uint16_t exitCoordLeft  = 0xFFF9;
-uint16_t exitCoordRight = 0xFFF9;
-uint16_t exitState      = 0xFFFB;
+EntityType exitCoordLeft  = EntityType::SQUARE_WALL;
+EntityType exitCoordRight = EntityType::SQUARE_WALL;
+EntityType exitState      = EntityType::BOTTOM_RIGHT_ROUND_WALL;
 
 // --------------------------------------------------
 // Entity / grid
@@ -79,14 +79,8 @@ int g_currentNameIndex = -1;
 // --------------------------------------------------
 // Level changes / grids
 // --------------------------------------------------
-LevelChange changeList[MAX_CHANGES] = {};
-uint16_t gameGrid[GRID_ROWS][GRID_COLS] = {};
 
-int16_t g_gridMain[GRID_ROWS][GRID_COLS] = {};
-int16_t g_gridAuxA[GRID_ROWS][GRID_COLS] = {};
-int16_t g_gridAuxB[GRID_ROWS][GRID_COLS] = {};
-
-int16_t g_entityIndexGrid[GRID_ROWS][GRID_COLS] = {};
+EntityType g_entityIndexGrid[GRID_ROWS][GRID_COLS] = {};
 
 // --------------------------------------------------
 // Cell click flags / entity tables
@@ -201,22 +195,16 @@ std::string g_levelInput;
 
 SDL_FRect g_mainRect{};
 
-std::vector<Spawner> g_spawners;
-
 const uint16_t g_table10C6[] = {0};
 const uint16_t g_table10C8[] = {0};
-
-const DecodeTileEntry g_decodeTileTable[] = {
-    {0,0,0}
-};
 
 const char* kDefaultStatusLine = "";
 const char* kDefaultHintText = "";
 const char* kDefaultLevelName = "";
 
-std::string g_levelDisplayText;
-std::string g_levelRawText;
 std::string g_levelHintText;
+std::string g_levelPassword;
+std::string g_levelVictoryText;
 
 uint8_t g_notificationHandlerParam[1] = {0};
 uint16_t g_notificationHandlerSlotWord[1] = {0};

@@ -70,7 +70,7 @@ extern const char* borderTitle;
 extern const char* defaultKyeTitle;
 
 int showNameInputDialog();
-void renderEntityToSdl(int16_t entityIndex);
+void renderEntity(int entityIndex);
 GridCellRect computeHudCellRectFromIndex(std::int16_t cellIndex);
 void drawFrame(SDL_Renderer* renderer, const SDL_FRect& r, bool selected);
 void cleanupAndExit(int exitCode);
@@ -136,7 +136,7 @@ extern char hudMessageText[256];
 extern TTF_Font* g_font;
 
 int showFileMessage(const char* message);
-void runTileSparkleEffect(int16_t effectId);
+void runTileSparkleEffect(int effectId);
 void renderHudAndFrame();
 void initializeLayoutRects();
 void drawText(int x, int y, const char* text, int len);

@@ -323,9 +323,9 @@ bool flushBuffer(uint8_t* bufferStart, uint8_t*& writePtr, int& bufferRemaining,
     return !flushFailed;
 }
 
-static inline std::uint16_t divide64_unsigned(std::uint64_t value)
+uint16_t divide64_unsigned(uint64_t value)
 {
-    return static_cast<std::uint16_t>(value / 0x8000ull);
+    return static_cast<uint16_t>((value >> 16) & 0xFFFF);
 }
 
 char* copyMemory(char* dest, const char* src, uint16_t size)

@@ -34,7 +34,6 @@ static FileOpenMode prepareFileInfo(
 );
 
 static int dosCreateFile(const char* filename, int attributes);
-static int openFileHandler(const std::string& filepath, uint16_t flags, bool create);
 static int validateFile(FileLike* file, int param);
 
 static int createFile(const char* filename, int attributes);
@@ -92,7 +91,7 @@ int findMatchingLineInFile(const char* targetString) {
     while (currentIndex <= totalBlockCount) {
         char entryBuffer[0x400] = {0};  // var_38E
 
-        if (readStructuredBlock(file, entryBuffer) < 0) {
+        if (loadLevelMetaData(file, entryBuffer) < 0) {
             cleanFile(file);
             return -1;
         }
@@ -110,6 +109,7 @@ int findMatchingLineInFile(const char* targetString) {
 }
 
 FileLike* openAndPrepareFileFromSlot(const char* filepath, const char* mode) {
+    cout << "Opening file " << filepath << endl;
     FileLike* slot = findFreeFileSlot();
     if (!slot) return nullptr;
     return prepareAndOpenFile(slot, 0, mode, filepath);
@@ -129,7 +129,7 @@ FileLike* findFreeFileSlot() {
 FileLike* prepareAndOpenFile(FileLike* file, uint16_t openFlags, const char* adviceType, const char* filepath)
 {
     if (!file) return nullptr;
-
+    
     uint16_t requestedFlags = 0;
     uint16_t attributeFlags = 0;
 
@@ -147,9 +147,9 @@ FileLike* prepareAndOpenFile(FileLike* file, uint16_t openFlags, const char* adv
     {
         int finalFlags = attributeFlags | openFlags;
 
-        int handle = openFileHandler(filepath, finalFlags, (finalFlags & 0x00F0) != 0);
+        int handle = openFileHandler(filepath, finalFlags);
 
-        file->fd = static_cast<int8_t>(handle);
+        file->fd = static_cast<int16_t>(handle);
 
         if (handle < 0)
         {
@@ -174,7 +174,8 @@ FileLike* prepareAndOpenFile(FileLike* file, uint16_t openFlags, const char* adv
         return nullptr;
     }
 
-    file->pad = 0;
+    file->_pad0C = 0;
+
     return file;
 }
 
@@ -215,40 +216,75 @@ int validateFile(FileLike* file, int mode)
   return 0;
 }
 
-int openFileHandler(const std::string& filepath, uint16_t flags, bool isNewFile) {
+int openFileHandler(const std::string& filepath, uint16_t flags)
+{
     int initialAttr = fileAttrOp(filepath.c_str(), 0, 0);
-    if (initialAttr == -1 && err != 2) {
+
+    if (initialAttr == -1 && err != 2)
+    {
         handleDosError(err);
         return -1;
     }
 
-    int tmpFd = createFile(filepath.c_str(), isNewFile ? 0 : initialAttr);
-    if (tmpFd < 0) return -1;
-    closeFile(tmpFd);
+    if (initialAttr == -1 && err == 2)
+    {
+        initialAttr = (flags & 0x80) ? 0 : 1;
+    }
+    else
+    {
+        if (flags & 0x400)
+        {
+            handleDosError(0x50);
+            return -1;
+        }
+    }
+
+    // Correspond au test ASM : test si,0F0h
+    if (flags & 0x00F0)
+    {
+        int tmpFd = createFile(filepath.c_str(), 0);
+        if (tmpFd < 0)
+            return -1;
+
+        closeFile(tmpFd);
+    }
 
     int handle = openFile(filepath.c_str(), flags);
-    if (handle < 0) return -1;
+    if (handle < 0)
+        return -1;
 
-    uint16_t fileInfo = ioctl(handle, 0, 0, 0);
-    if (fileInfo & 0x80) {
+    uint16_t ioctlInfo = ioctl(handle, 0, 0, 0);
+
+    if (ioctlInfo & 0x80)
+    {
         flags |= 0x2000;
-        if (flags & 0x8000) {
-            uint16_t modAttr = (fileInfo & 0xFF) | 0x20;
+
+        if (flags & 0x8000)
+        {
+            uint16_t modAttr = (ioctlInfo & 0xFF) | 0x20;
             ioctl(handle, 1, modAttr, 0);
         }
-    } else if (flags & 0x0200) {
+    }
+    else if (flags & 0x0200)
+    {
         testFileWriteability(handle);
     }
 
-    if ((initialAttr & 0x01) && (flags & 0x0100) && (flags & 0x00F0)) {
-        fileAttrOp(filepath.c_str(), 1, 0x01);
+    if ((initialAttr & 1) && (flags & 0x0100) && (flags & 0x00F0))
+    {
+        fileAttrOp(filepath.c_str(), 1, 1);
     }
 
     uint16_t newFlags = (flags & 0xF8FF);
-    if (flags & 0x0300) newFlags |= 0x1000;
-    if (!(initialAttr & 0x01)) newFlags |= 0x0100;
+
+    if (flags & 0x0300)
+        newFlags |= 0x1000;
+
+    if (!(initialAttr & 1))
+        newFlags |= 0x0100;
 
     fdFlagsRef(handle) = newFlags;
+
     return handle;
 }
 
@@ -272,22 +308,28 @@ int dosCreateFile(const char* filename, int attributes) {
     return 3;  // Fausse valeur de handle (DOS commence souvent à 3)
 }
 
-int readLineToBuffer(FileLike *file, char *outBuf, int maxLen) {
-    char tempBuffer[256] = {0};
-    readLine(tempBuffer, 0xFF, file);
+int readLineToBuffer(FileLike* file, char* outBuf, int maxLen)
+{
+    char temp[256];
 
-    int i = 0;
-    const char *src = tempBuffer;
-    char *dst = outBuf;
+    if (!readLine(temp, 0xFF, file))
+        return -1;
 
-    while (*src != '\0' && i < maxLen) {
-        if (*src == '\n' || *src == '\r') break;
+    int count = 0;
+    char* src = temp;
+    char* dst = outBuf;
+
+    while (*src != '\0' &&
+           *src != '\n' &&
+           *src != '\r' &&
+           count < maxLen)
+    {
         *dst++ = *src++;
-        i++;
+        count++;
     }
 
     *dst = '\0';
-    return i;
+    return count;
 }
 
 void flushAllDirtyTextBuffers() {
@@ -303,76 +345,88 @@ void flushAllDirtyTextBuffers() {
     }
 }
 
-int readCharFromTextBuffer(FileLike* file) {
-    if (!file) return kEOF;
+int readCharFromTextBuffer(FileLike* file)
+{
+    if (!file)
+        return -1;
 
-    // Fast path: il reste des chars en buffer
-    if (file->bytesRead > 0) {
+    if (file->bytesRead > 0)
+    {
         file->bytesRead--;
-        const unsigned char ch = static_cast<unsigned char>(*file->bufferCursor);
+        unsigned char ch = static_cast<unsigned char>(*file->bufferCursor);
         file->bufferCursor++;
-        return static_cast<int>(ch);
+        return ch;
     }
 
-    // Si bytesRead == 0 : pas de données en buffer
-    // Si bytesRead < 0 ou conditions/flags => erreur/EOF
-    if (file->bytesRead < 0) {
-        file->flags |= FILE_FLAG_IO_ERROR;
-        return kEOF;
+    if (file->bytesRead < 0)
+    {
+        file->flags |= 0x10;
+        return -1;
     }
 
-    // Si flags 0x110 set OU pas read-enabled, etc. => fail
-    if ((file->flags & FILE_FLAG_NO_REFILL) != 0 ||
-        (file->flags & FILE_FLAG_WRITEONLY) == 0) {
-        file->flags |= FILE_FLAG_IO_ERROR;
-        return kEOF;
+    if ((file->flags & 0x0110) != 0)
+    {
+        file->flags |= 0x10;
+        return -1;
     }
 
-    // Mode "buffered": si bufferSize != 0, on tente de remplir et relire
-    if (file->bufferSize != 0) {
-        file->flags |= FILE_FLAG_BUFFERED_ACTIVE;
-        if (fillTextBuffer(file) == 0) {
-            // refill ok => relire (retombe sur fast path logique asm)
+    if ((file->flags & 0x0001) == 0)
+    {
+        file->flags |= 0x10;
+        return -1;
+    }
+
+    file->flags |= 0x80;
+
+    if (file->bufferSize != 0)
+    {
+        if (fillTextBuffer(file) == 0)
+        {
             file->bytesRead--;
-            const unsigned char ch = static_cast<unsigned char>(*file->bufferCursor);
+            unsigned char ch = static_cast<unsigned char>(*file->bufferCursor);
             file->bufferCursor++;
-            return static_cast<int>(ch);
+            return ch;
         }
-        return kEOF;
+
+        file->flags |= 0x10;
+        return -1;
     }
 
-    // Mode "unbuffered": lecture 1 byte dans un buffer global (asm: 0x2EE0)
-    if (file->flags & FILE_FLAG_REPOSITION) {
+    if (file->flags & 0x0200)
         flushAllDirtyTextBuffers();
-    }
 
     char one = 0;
-    const int n = readTextBuffer(static_cast<int>(file->fd), &one, 1);
-    if (n == 0) {
-        const int ok = moveFilePointer(static_cast<int>(file->fd));
-        if (ok == 1) {
-            uint16_t f = file->flags;
-            f = static_cast<uint16_t>((f & FILE_FLAG_CLEAR_MASK) | FILE_FLAG_EOF);
-            file->flags = f;
-        } else {
-            file->flags |= FILE_FLAG_IO_ERROR;
+    int n = readTextBuffer(static_cast<int>(file->fd), (char*)&g_pendingChar, 1);
+
+    // std::cout << "READ n=" << n
+    //       << " char=" << (int)(unsigned char)g_pendingChar
+    //       << " '" << (char)g_pendingChar << "'"
+    //       << std::endl;
+    if (n == 0)
+    {
+        int ok = moveFilePointer(static_cast<int>(file->fd));
+
+        if (ok == 1)
+        {
+            file->flags = static_cast<uint16_t>((file->flags & 0xFE7F) | 0x20);
         }
-        return kEOF;
+        else
+        {
+            file->flags |= 0x10;
+        }
+
+        return -1;
     }
 
-    // n != 0 : un char dispo (asm: g_pendingChar, CR/LF handling)
-    g_pendingChar = static_cast<int16_t>(static_cast<unsigned char>(one));
-
-    if (g_pendingChar == 0x0D) { // '\r'
-        // asm: si pas flag 0x40 => boucle vers lecture brute (loc_6F8E)
-        if ((file->flags & FILE_FLAG_MODE) == 0) {
-            // relire un nouveau char (comportement identique au saut asm)
+    if (g_pendingChar == '\r')
+    {
+        if ((file->flags & 0x40) == 0)
             return readCharFromTextBuffer(file);
-        }
     }
 
-    file->flags = static_cast<uint16_t>(file->flags & ~FILE_FLAG_IO_ERROR);
-    return static_cast<int>(static_cast<unsigned char>(g_pendingChar));
+    file->flags &= 0xFFDF;
+
+    return static_cast<unsigned char>(g_pendingChar);
 }
 
 int fillTextBuffer(FileLike* file)
@@ -407,35 +461,45 @@ int fillTextBuffer(FileLike* file)
   return kEOF;
 }
 
-int readAndTrackChar(FileLike* file) {
+int readAndTrackChar(FileLike* file)
+{
     ++file->bytesRead;
     return readCharFromTextBuffer(file);
 }
 
-int readLine(char* outputBuffer, int maxLen, FileLike* file) {
+int readLine(char* outputBuffer, int maxLen, FileLike* file)
+{
     char* dst = outputBuffer;
-    int remaining = maxLen;
     int ch = 0;
 
-    while (true) {
-        if (ch == '\n') break;
-        if (--remaining <= 0) break;
+    while (true)
+    {
+        if (--maxLen <= 0)
+            break;
 
-        if (--file->bytesRead < 0) {
+        if (--file->bytesRead < 0)
             ch = readAndTrackChar(file);
-        } else {
-            ch = static_cast<unsigned char>(*file->bufferCursor++);
-        }
+        else
+            ch = (unsigned char)*file->bufferCursor++;
 
-        if (ch == -1) break;
-        *dst++ = static_cast<char>(ch);
+        if (ch == -1)
+            break;
+
+        *dst++ = (char)ch;
+
+        if (ch == '\n')
+            break;
     }
 
-    if (ch == -1 && dst == outputBuffer) return 0;
+    if (dst == outputBuffer)
+        return 0;
+
     *dst = '\0';
 
-    if (file->flags & 0x10) return 0;
-    return reinterpret_cast<std::intptr_t>(outputBuffer);
+    if (file->flags & 0x10)
+        return 0;
+
+    return (int)(intptr_t)outputBuffer;
 }
 
 int flushAllTextBuffers() {
@@ -501,44 +565,49 @@ static int flushTextBuffer(FileLike* file) {
 }
 
 int readTextBuffer(int fd, char* buffer, int size) {
-    if (fd >= maxFileCount)
-        handleDosError(6); // File handle out of range
+    if (fd >= maxFileCount) {
+        handleDosError(6);
+        return -1;
+    }
 
-    if (size < 1)
-        return 0;
+    if (size < 1) return 0;
 
-    // Si fichier ouvert en mode texte spécial (flag 0x200)
     if (fdFlagsRef(fd) & 0x0200)
         return 0;
 
-    int bytesRead = readFile(fd, buffer, size);
-    if (bytesRead < 1)
-        return bytesRead;
+    while (true) {
+        int bytesRead = readFile(fd, buffer, size);
+        if (bytesRead < 1)
+            return bytesRead;
 
-    // Si fichier ouvert en mode texte avec CRLF management (flag 0x4000)
-    if (!(fdFlagsRef(fd) & 0x4000))
-        return bytesRead;
+        if (!(fdFlagsRef(fd) & 0x4000))
+            return bytesRead;
 
-    char* dst = buffer;
-    char* src = buffer;
-    int count = bytesRead;
+        char* dst = buffer;
+        char* src = buffer;
+        int count = bytesRead;
 
-    while (count--) {
-        char c = *src++;
-        if (c == 0x1A) {  // EOF in DOS text files
-            // Rewind file by remaining characters
-            moveFilePointerExtended(fd, -count - 1, SEEK_CUR);
-            fdFlagsRef(fd) |= 0x200;
-            break;
-        } else if (c == '\r') {
-            // skip CR, but check next
-            continue;
-        } else {
-            *dst++ = c;
+        while (count--) {
+            char c = *src++;
+            if (c == 0x1A) {
+                moveFilePointerExtended(fd, -count - 1, SEEK_CUR);
+                fdFlagsRef(fd) |= 0x0200;
+                break;
+            } else if (c == '\r') {
+                continue;
+            } else {
+                *dst++ = c;
+            }
         }
-    }
 
-    return dst - buffer;
+        const int filteredCount = static_cast<int>(dst - buffer);
+
+        if (filteredCount > 0)
+            return filteredCount;
+
+        // uniquement des '\r' lus -> on relit
+        // std::cout << "[readTextBuffer] skipped CR-only chunk, retrying\n";
+    }
 }
 
 int readFile(int fd, void* buffer, uint16_t size) {
@@ -569,15 +638,37 @@ int readFile(int fd, void* buffer, uint16_t size) {
     return static_cast<int>(bytesRead);
 }
 
-int readStructuredBlock(FileLike* file, char* outBuf) {
-    if (readLineToBuffer(file, outBuf, 0x21) < 0) return -1;
-    if (readLineToBuffer(file, outBuf + 0x78, 0x53) < 0) return -1;
-    if (readLineToBuffer(file, outBuf + 0x23, 0x53) < 0) return -1;
+int readNonEmptyLine(FileLike* file, char* buffer, int size)
+{
+    do {
+        if (readLineToBuffer(file, buffer, size) < 0)
+            return -1;
+    } while (buffer[0] == '\0');
 
-    char* ptr = outBuf + 0xCD;
-    for (int i = 0; i < 0x14; ++i) {
+    return 0;
+}
+
+int loadLevelMetaData(FileLike* file, char* gridBuffer)
+{
+    if (readLineToBuffer(file, gridBuffer, 0x21) < 0)
+        return -1;
+    g_levelPassword = gridBuffer;
+
+    if (readLineToBuffer(file, gridBuffer + 0x23, 0x53) < 0)
+        return -1;
+    g_levelHintText = gridBuffer + 0x23;
+
+    if (readLineToBuffer(file, gridBuffer + 0x78, 0x53) < 0)
+        return -1;
+    g_levelVictoryText = gridBuffer + 0x78;
+
+    char* ptr = gridBuffer + 0xCD;
+
+    for (int row = 0; row < GRID_ROWS ; ++row)
+    {
         if (readLineToBuffer(file, ptr, 0x21) < 0)
             return -1;
+
         ptr += 0x23;
     }
 
@@ -996,11 +1087,11 @@ int cleanFile(FileLike* file) {
         file->bytesRead = 0;
         file->fd = -1;
 
-        if (file->pad != 0) {
-            prepareAndRelease(0, 0, file->pad);
-            deleteFile(file->buffer);
-            file->pad = 0;
-        }
+        // if (file->pad != 0) {
+        //     prepareAndRelease(0, 0, file->pad);
+        //     deleteFile(file->buffer);
+        //     file->pad = 0;
+        // }
     }
 
     return result;
@@ -1385,36 +1476,39 @@ void generateFileFromMappedData()
     cleanFile(file);
 }
 
-static int16_t computeTextSeekAdjustment(const FileLike& file) {
-    int16_t diVal = 0;
+static int16_t computeTextSeekAdjustment(FileLike* file)
+{
+    int16_t diVal;
 
-    if (file.bytesRead < 0) {
-        int16_t dx = static_cast<int16_t>(static_cast<int32_t>(file.bufferSize) + file.bytesRead + 1);
-        diVal = dx;
-    } else {
-        diVal = static_cast<int16_t>(std::abs(file.bytesRead));
-    }
-    if ((file.flags & 0x0040u) != 0) {
+    if (file->bytesRead < 0)
+        diVal = static_cast<int16_t>(file->bufferSize + file->bytesRead + 1);
+    else
+        diVal = static_cast<int16_t>(std::abs(file->bytesRead));
+
+    if (file->flags & 0x0040)
         return diVal;
-    }
 
-    const int16_t count = static_cast<int16_t>(std::abs(file.bytesRead));
-    if (count == 0) return diVal;
+    int16_t count = static_cast<int16_t>(std::abs(file->bytesRead));
+    if (count == 0)
+        return diVal;
 
-    if (file.bytesRead < 0) {
-        const char* p = file.bufferCursor;
-        for (int16_t i = 0; i < count; ++i) {
+    if (file->bytesRead < 0)
+    {
+        const char* p = file->bufferCursor;
+        for (int16_t i = 0; i < count; ++i)
+        {
             --p;
-            if (*p == '\n') {
+            if (*p == '\n')
                 ++diVal;
-            }
         }
-    } else {
-        const char* p = file.bufferCursor;
-        for (int16_t i = 0; i < count; ++i) {
-            if (*p == '\n') {
+    }
+    else
+    {
+        const char* p = file->bufferCursor;
+        for (int16_t i = 0; i < count; ++i)
+        {
+            if (*p == '\n')
                 ++diVal;
-            }
             ++p;
         }
     }
@@ -1424,31 +1518,19 @@ static int16_t computeTextSeekAdjustment(const FileLike& file) {
 
 int resetAndSeekFile(FileLike* file, int mode)
 {
-    if (!file) return -1;
-
-    // 1) flush éventuel des buffers texte
-    if (flushTextBuffer(file) != 0) {
+    if (!file)
         return -1;
-    }
 
-    // 2) calcul de l’offset implicite (logique asm)
-    int32_t offset = 0;
-    if (mode == 1 && file->bytesRead > 0) {
-        offset = -file->bytesRead;
-    }
+    flushTextBuffer(file);
 
-    // 3) reset état buffer
-    file->flags &= FILE_MASK_CLEAR_FE7F;
+    file->flags &= 0xFE7F;
     file->bytesRead = 0;
     file->bufferCursor = file->buffer;
 
-    // 4) seek DOS-like
-    const int rc = moveFilePointerExtended(
-        static_cast<int>(file->fd),
-        offset,
-        1   // SEEK_CUR (comme l’asm)
-    );
+    if (mode == 1 && file->bytesRead > 0)
+    {
+        moveFilePointerExtended(file->fd, -file->bytesRead, SEEK_CUR);
+    }
 
-    return (rc < 0) ? -1 : 0;
+    return 0;
 }
-

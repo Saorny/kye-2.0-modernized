@@ -64,9 +64,7 @@ int main(int argc, char** argv)
         }
 
         processCallbackQueue(nullptr, nullptr);
-        SDL_SetRenderDrawColor(g_renderer, 0,0,0,255);
-        SDL_RenderClear(g_renderer);
-        SDL_RenderPresent(g_renderer);
+        handlePaintOrRenderRequest();
         SDL_Delay(16);
     }
 

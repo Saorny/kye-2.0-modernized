@@ -41,9 +41,9 @@ std::int16_t baseY = 0;
 
 using EntityHandler = void(*)(int);
 
-extern std::string g_levelRawText;
+extern std::string g_levelPassword;
+extern std::string g_levelVictoryText;
 extern std::string g_levelHintText;
-extern std::string g_levelDisplayText;
 
 constexpr int kMaxLevelEntries = 32;
 
@@ -55,29 +55,24 @@ std::string g_statusLineText;
 
 static bool g_keyDownFlag = false;
 
-extern const char* g_str_1169;
-extern const char* g_str_1171;
-extern const char* g_str_117A;
-extern const char* g_str_1189;
-extern const char* g_str_1192;
-extern const char* g_str_119C;
-extern const char* g_str_11A4;
-extern const char* g_str_11AF;
-extern const char* g_str_11BE;
-extern const char* g_str_11CE;
-
-extern std::string g_levelRawText;
+extern std::string g_levelPassword;
+extern std::string g_levelVictoryText;
 extern std::string g_levelHintText;
-extern std::string g_levelDisplayText;
 
-static constexpr int16_t kTargetRequiredState = 0x001F;
-static constexpr int16_t kTargetClearedState  = 0x0020;
+// static constexpr int16_t kTargetRequiredState = 0x001F;
+// static constexpr int16_t kTargetClearedState  = 0x0020;
 
 static SDL_TimerID g_timerId = 0;
 
-static constexpr std::int16_t TILE_SEL_SENTINEL = (std::uint16_t)EntityType::Diamond;
-static constexpr std::int16_t TILE_SPAWN        = (std::uint16_t)0xFFFE;
-static constexpr std::int16_t TILE_EXIT         = (std::uint16_t)0xFFF9;
+// static constexpr std::int16_t TILE_SPAWN        = (std::uint16_t)0xFFFE;
+// static constexpr std::int16_t TILE_EXIT         = (std::uint16_t)0xFFF9;
+
+static void placeTileAndSpawnEntityIfEmpty_Core(
+    int row,
+    int col,
+    EntityType type,
+    uint16_t* spawnCounterPtr
+);
 
 bool showGotoLevelDialog()
 {
@@ -114,12 +109,11 @@ bool showGotoLevelDialog()
     return false;
 }
 
-static inline bool isFixedTile(std::int16_t v) {
-    // 0xFFF5..0xFFFD inclus
-    return (v >= (std::int16_t)0xFFF5) && (v <= (std::int16_t)0xFFFD);
+static inline bool isFixedTile(EntityType type)
+{
+    return type >= EntityType::TOP_RIGHT_ROUNDED_WALL && type <= EntityType::BOTTOM_LEFT_ROUND_WALL;
 }
 
-// Un type d'event SDL "privé" pour ton polling
 static Uint32 g_pollEventType = 0;
 
 static constexpr Uint32 kPollingIntervalMs = 100; // 0x64
@@ -143,7 +137,6 @@ static Uint32 SDLCALL PollTimerCallback(void* /*userdata*/, SDL_TimerID /*timerI
 
 void startPollingTimer()
 {
-    // 1) Register l'event type (une seule fois)
     if (g_pollEventType == 0) {
         g_pollEventType = SDL_RegisterEvents(1);
         if (g_pollEventType == 0) {
@@ -180,16 +173,16 @@ void updateLevelEntitiesEvery30Frames() {
     for (int i = 0; i < g_activeSpawnerCount; ++i) {
         auto& entry = g_gameState.entities[i];
 
-        if (entry.entityType < 0x32 || entry.entityType > 0x3B) {
+        if (entry.entityType < EntityType::UNKNOWN || entry.entityType > EntityType::COUNTDOWN) {
             continue;
         }
 
         int row = entry.row;
         int col = entry.col;
 
-        if (entry.entityType > 0x32) {
-            --entry.entityType;
-            moveAndRedrawEntity(i, row, col);  // Possibly triggers animation or state shift
+        if (entry.entityType > EntityType::UNKNOWN) {
+            entry.entityType = (EntityType)((int)entry.entityType - 1);
+            moveAndRedrawEntity(i, row, col);
         } else {
             drawRectangleFromGrid(row, col);
             markEntryInactive(i);
@@ -201,24 +194,23 @@ void updateLevelEntitiesEvery30Frames() {
 
 void moveAndRedrawEntity(int entityIndex, int newRow, int newCol)
 {
-    auto& entity = g_gameState.entities[entityIndex];
+    // EntityInfo& entity = g_gameState.entities[entityIndex];
 
-    const int oldRow = entity.row;
-    const int oldCol = entity.col;
-    drawRectangleFromGrid(oldRow, oldCol);
-    if (oldRow >= 0 && oldRow < GRID_ROWS &&
-        oldCol >= 0 && oldCol < GRID_COLS)
-    {
-        g_entityIndexGrid[oldRow][oldCol] = -1;
-    }
-    entity.row = newRow;
-    entity.col = newCol;
-    if (newRow >= 0 && newRow < GRID_ROWS &&
-        newCol >= 0 && newCol < GRID_COLS)
-    {
-        g_entityIndexGrid[newRow][newCol] = entityIndex;
-    }
-    renderEntityToSdl(entityIndex);
+    // int oldRow = entity.row;
+    // int oldCol = entity.col;
+
+    // // redraw previous tile
+    // drawRectangleFromGrid(oldRow, oldCol);
+
+    // // update entity position
+    // entity.row = newRow;
+    // entity.col = newCol;
+
+    // // update tile map
+    // g_gameState.tileMap[newRow][newCol] = entityIndex;
+
+    // // render entity
+    // renderEntity(entityIndex);
 }
 
 void showNewLevelDialog(SDL_Window* window)
@@ -231,19 +223,18 @@ void showNewLevelDialog(SDL_Window* window)
     SDL_StartTextInput(g_window);
 }
 
-bool tryMoveSmartEntity(int entityIndex)
+bool tryMoveMagnet(int entityIndex)
 {
     auto& e = g_gameState.entities[entityIndex];
-
     const int row = e.row;
     const int col = e.col;
 
     // --- 1️⃣ RIGHT ---
-    if (g_gridMain[row][col + 1] == CELL_FLAG_EMPTY)
+    if (g_gameState.tileMap[row][col + 1] == EntityType::EMPTY_CELL)
     {
         int target = g_gameState.rightEntityMap[row][col];
         if (target >= 0 &&
-            g_gameState.entities[target].entityType == 5)
+            g_gameState.entities[target].entityType == EntityType::MagnetVertical)
         {
             moveAndRedrawEntity(entityIndex, row, col + 1);
             return true;
@@ -251,11 +242,11 @@ bool tryMoveSmartEntity(int entityIndex)
     }
 
     // --- 2️⃣ LEFT ---
-    if (g_gridMain[row][col - 1] == CELL_FLAG_EMPTY)
+    if (g_gameState.tileMap[row][col - 1] == EntityType::EMPTY_CELL)
     {
         int target = g_gameState.leftEntityMap[row][col];
         if (target >= 0 &&
-            g_gameState.entities[target].entityType == 5)
+            g_gameState.entities[target].entityType == EntityType::MagnetVertical)
         {
             moveAndRedrawEntity(entityIndex, row, col - 1);
             return true;
@@ -263,11 +254,11 @@ bool tryMoveSmartEntity(int entityIndex)
     }
 
     // --- 3️⃣ DOWN ---
-    if (g_gridMain[row + 1][col] == CELL_FLAG_EMPTY)
+    if (g_gameState.tileMap[row + 1][col] == EntityType::EMPTY_CELL)
     {
         int target = g_gameState.bottomEntityMap[row][col];
         if (target >= 0 &&
-            g_gameState.entities[target].entityType == 6)
+            g_gameState.entities[target].entityType == EntityType::MagnetHorizontal)
         {
             moveAndRedrawEntity(entityIndex, row + 1, col);
             return true;
@@ -275,11 +266,11 @@ bool tryMoveSmartEntity(int entityIndex)
     }
 
     // --- 4️⃣ UP ---
-    if (g_gridMain[row - 1][col] == CELL_FLAG_EMPTY)
+    if (g_gameState.tileMap[row - 1][col] == EntityType::EMPTY_CELL)
     {
         int target = g_gameState.topEntityMap[row][col];
         if (target >= 0 &&
-            g_gameState.entities[target].entityType == 6)
+            g_gameState.entities[target].entityType == EntityType::MagnetHorizontal)
         {
             moveAndRedrawEntity(entityIndex, row - 1, col);
             return true;
@@ -289,7 +280,7 @@ bool tryMoveSmartEntity(int entityIndex)
     return false;
 }
 
-int canEntityMove(int entityIndex)
+int canEntityMoveMagnet(int entityIndex)
 {
     auto& e = g_gameState.entities[entityIndex];
     const int row = e.row;
@@ -299,7 +290,7 @@ int canEntityMove(int entityIndex)
     {
         int target = g_gameState.rightEntityMap[row][col];
         if (target >= 0 &&
-            g_gameState.entities[target].entityType == 5)
+            g_gameState.entities[target].entityType == EntityType::MagnetVertical)
             return 1;
     }
 
@@ -307,7 +298,7 @@ int canEntityMove(int entityIndex)
     {
         int target = g_gameState.leftEntityMap[row][col];
         if (target >= 0 &&
-            g_gameState.entities[target].entityType == 5)
+            g_gameState.entities[target].entityType == EntityType::MagnetVertical)
             return 1;
     }
 
@@ -315,7 +306,7 @@ int canEntityMove(int entityIndex)
     {
         int target = g_gameState.bottomEntityMap[row][col];
         if (target >= 0 &&
-            g_gameState.entities[target].entityType == 6)
+            g_gameState.entities[target].entityType == EntityType::MagnetHorizontal)
             return 1;
     }
 
@@ -323,7 +314,7 @@ int canEntityMove(int entityIndex)
     {
         int target = g_gameState.topEntityMap[row][col];
         if (target >= 0 &&
-            g_gameState.entities[target].entityType == 6)
+            g_gameState.entities[target].entityType == EntityType::MagnetHorizontal)
             return 1;
     }
 
@@ -332,16 +323,16 @@ int canEntityMove(int entityIndex)
 
 bool checkAndHandleDeathCondition(int changeIndex)
 {
-    const LevelChange& entry = changeList[changeIndex];
+    const EntityInfo& entry = g_gameState.entities[changeIndex];
 
-    const int row = entry.row;
-    const int col = entry.col;
+    int row = entry.row;
+    int col = entry.col;
 
     bool death =
-        g_gameState.rightEntityMap[row][col]  == CELL_FLAG_SENTINEL ||
-        g_gameState.leftEntityMap[row][col]   == CELL_FLAG_SENTINEL ||
-        g_gameState.topEntityMap[row][col]    == CELL_FLAG_SENTINEL ||
-        g_gameState.bottomEntityMap[row][col] == CELL_FLAG_SENTINEL;
+        g_gameState.leftEntityMap[row][col]   == -2 ||
+        g_gameState.rightEntityMap[row][col]  == -2 ||
+        g_gameState.topEntityMap[row][col]    == -2 ||
+        g_gameState.bottomEntityMap[row][col] == -2;
 
     if (death)
     {
@@ -358,20 +349,19 @@ void updateLivesDisplay()
 {
     hasLevelTransition = 1;
 
-    previousRow = spawnCol;
-    previousCol = spawnRow;
+    previousRow = kyeCol;
+    previousCol = kyeRow;
 
-    int leftX   = spawnCol - 1;
-    int bottomY = spawnRow + 1;
-    int rightX  = spawnCol + 1;
-    int topY    = spawnRow - 1;
+    int leftX   = kyeCol - 1;
+    int bottomY = kyeRow + 1;
+    int rightX  = kyeCol + 1;
+    int topY    = kyeRow - 1;
 
     int scanLength = 2;
     int iteration  = 1;
 
     while (iteration < 5)
     {
-        // ↓ colonne gauche vers bas
         int x = leftX;
         int y = bottomY;
 
@@ -380,13 +370,12 @@ void updateLivesDisplay()
             previousRow = x;
             previousCol = y;
 
-            if (gameGrid[y][x] == CELL_FLAG_EMPTY)
+            if (g_gameState.tileMap[x][y] == EntityType::EMPTY_CELL)
                 return;
 
             y++;
         }
 
-        // → ligne bas vers droite
         x = rightX;
         y = bottomY;
 
@@ -395,13 +384,12 @@ void updateLivesDisplay()
             previousRow = x;
             previousCol = y;
 
-            if (gameGrid[y][x] == CELL_FLAG_EMPTY)
+            if (g_gameState.tileMap[x][y] == EntityType::EMPTY_CELL)
                 return;
 
             x--;
         }
 
-        // ↑ colonne droite vers haut
         x = rightX;
         y = topY;
 
@@ -410,13 +398,12 @@ void updateLivesDisplay()
             previousRow = x;
             previousCol = y;
 
-            if (gameGrid[y][x] == CELL_FLAG_EMPTY)
+            if (g_gameState.tileMap[x][y] == EntityType::EMPTY_CELL)
                 return;
 
             y--;
         }
 
-        // ← ligne haut vers gauche
         x = leftX;
         y = topY;
 
@@ -425,7 +412,7 @@ void updateLivesDisplay()
             previousRow = x;
             previousCol = y;
 
-            if (gameGrid[y][x] == CELL_FLAG_EMPTY)
+            if (g_gameState.tileMap[x][y] == EntityType::EMPTY_CELL)
                 return;
 
             x++;
@@ -446,12 +433,13 @@ void updateLivesDisplay()
 int loadLevelByIndex(int level)
 {
     std::cout << "Loading " << g_selectedFilePath << ", level " << level << std::endl;
-    if (!fileAccessEnabled) {
+
+    if (!fileAccessEnabled)
         return 0;
-    }
 
     FileLike* file = openAndPrepareFileFromSlot(g_selectedFilePath, "r");
-    if (!file) {
+    if (!file)
+    {
         showMessage(g_selectedFilePath, "Cannot open file: ");
         resetLevelStateMemory();
         fileAccessEnabled = false;
@@ -462,41 +450,52 @@ int loadLevelByIndex(int level)
 
     std::array<char, 0x4F + 1> outBuf{};
     readLineToBuffer(file, outBuf.data(), 0x4F);
+
     levelCount = parseSignedDecimalString(outBuf.data());
+    cout << "Level count " << levelCount << endl;
 
-    hasLevelList            = false;
-    g_hasPendingModal       = false;
-    g_levelJustLoadedFlag   = true;
-    hasLevelTransition      = false;
-    remainingLives          = 3;
-    selectedObjectIndex     = 0xFFFF;
+    hasLevelList          = false;
+    g_hasPendingModal     = false;
+    g_levelJustLoadedFlag = true;
+    hasLevelTransition    = false;
+    remainingLives        = 3;
+    selectedObjectIndex   = 0xFFFF;
 
-    if (level < 1) {
+    if (level < 1)
         level = 1;
-    } else if (level > levelCount) {
+    else if (level > levelCount)
         level = levelCount;
-    }
 
     std::array<char, 0x38C> levelBlock{};
-    for (int i = 0; i < level; ++i) {
-        if (readStructuredBlock(file, levelBlock.data()) < 0) {
+
+    for (int i = 0; i < level; ++i)
+    {
+        if (loadLevelMetaData(file, levelBlock.data()) < 0)
+        {
             cleanFile(file);
             return 0;
         }
     }
-    cleanFile(file);
+
     g_activeSpawnerCount = 0;
 
-    g_levelRawText.assign(reinterpret_cast<char*>(g_levelHintText.data()));
-    g_levelHintText    = std::string(reinterpret_cast<char*>(g_levelHintText.data() + 0x150));
-    g_levelDisplayText = std::string(reinterpret_cast<char*>(g_levelHintText.data() + 0x2A0));
+    cout << "PASSWORD => " << g_levelPassword << endl;
+    cout << "VICTORY => " << g_levelVictoryText << endl;
+    cout << "HINT => " << g_levelHintText << endl;
+    for (int row = 0; row < GRID_ROWS; ++row)
+    {
+        const char* linePtr = levelBlock.data() + (6 * 0x23 - 5) + row * 0x23;
 
-    std::array<char, 0x23 * 0x14> lineData{};
-    for (int col = 0; col < 0x14; ++col) {
-        loadLevelRow(col, lineData.data() + col * 0x23);
+        cout << "MAP LINE => [";
+        cout.write(linePtr, 30);
+        cout << "]" << endl;
+
+        loadLevelRow(row, linePtr);
     }
 
     postLoadLevel();
+
+    cleanFile(file);
     return 1;
 }
 
@@ -509,261 +508,243 @@ static inline void safeCopy(char* dst, std::size_t dstCap, const char* src)
 
 void resetLevelStateMemory()
 {
-    // g_activeSpawnerCount = 0
     g_activeSpawnerCount = 0;
 
-    // copies de strings (équivalent rep movsw)
-    safeCopy(g_levelName,           sizeof(g_levelName),           kDefaultLevelName);
-    safeCopy(g_levelHintTextBuffer, sizeof(g_levelHintTextBuffer), kDefaultHintText);
-    safeCopy(g_statusLineBuffer,    sizeof(g_statusLineBuffer),    kDefaultStatusLine);
-
-    // 1) Remplir toute la grille en "Wall5" (0xFFF9)
-    for (int row = 0; row < GRID_ROWS; ++row) {
-        for (int col = 0; col < GRID_COLS; ++col) {
-            gameGrid[row][col] = TILE_WALL5;
+    // fill whole grid
+    for (int row = 0; row < GRID_ROWS; ++row)
+    {
+        for (int col = 0; col < GRID_COLS; ++col)
+        {
+            g_gameState.tileMap[row][col] = EntityType::SQUARE_WALL;
         }
     }
 
-    // 2) Vider l'intérieur (rows 1..28, cols 1..18) en 0xFFFF
-    // asm: col de 1 à 0x12 (18), row de 1 à 0x1C (28)
-    for (int row = 1; row <= 28; ++row) {
-        for (int col = 1; col <= 18; ++col) {
-            gameGrid[row][col] = TILE_EMPTY;
+    // clear interior
+    for (int row = 1; row < GRID_ROWS - 1; ++row)
+    {
+        for (int col = 1; col < GRID_COLS - 1; ++col)
+        {
+            g_gameState.tileMap[row][col] = EntityType::EMPTY_CELL; // 0xFFFF
         }
     }
 
-    // valeurs finales
-    exitCoordLeft  = TILE_WALL5; // 0xFFF9
-    exitCoordRight = TILE_WALL5; // 0xFFF9
-    exitState      = 0xFFFB;
+    exitCoordLeft  = EntityType::SQUARE_WALL;
+    exitCoordRight = EntityType::SQUARE_WALL;
+    exitState      = EntityType::BOTTOM_RIGHT_ROUND_WALL;
 
     srcRow = 3;
     srcCol = 3;
 
-    spawnRow = 3;
-    spawnCol = 3;
+    kyeRow = 3;
+    kyeCol = 3;
 
-    selectedTileValue   = 0xFFFE;
-    selectionState      = (int)EntityType::Diamond;
-    selectedEntityIndex = 0xFFFF; // asm: selectedObjectIndex
+    selectedTileValue   = EntityType::KYE_LOCATION;
+    selectionState      = EntityType::DIAMOND;
+    selectedObjectIndex = -1;
 }
 
-int decodeTile(char inputChar, std::uint16_t* outA, std::uint16_t* outB)
+int decodeTile(uint8_t* outType, EntityType* typeCode, char inputChar)
 {
-    if (!outA || !outB) return 0;
-
-    const std::uint8_t ch = static_cast<std::uint8_t>(inputChar);
-
-    for (std::size_t i = 0; ; ++i) {
-        const DecodeTileEntry& e = g_decodeTileTable[i];
-
-        // asm: cmp word ptr [bx+2C0h], 0FFFFh -> fin
-        if (e.a == 0xFFFFu) {
-            return 0;
-        }
-
-        // asm: mov al, [si+2C4h] ; cmp al, inputChar
-        if (e.symbol == ch) {
-            // asm: mov ax,[si+2C0] -> [di]
-            *outA = e.a;
-            // asm: mov ax,[si+2C2] -> [bx]
-            *outB = e.b;
+    for (const auto& e : ENTITY_MAPPINGS)
+    {
+        if (e.asciiChar == inputChar)
+        {
+            *outType = static_cast<uint8_t>(e.category);
+            *typeCode = e.param;
             return 1;
         }
     }
+
+    return 0;
 }
 
-std::int16_t registerLevelChange(std::int16_t tileId, std::int16_t row, std::int16_t col)
+std::int16_t addEntity(EntityType entityCode, std::int16_t row, std::int16_t col)
 {
     const std::uint16_t index = g_activeSpawnerCount;
 
-    // asm: g_cellClickFlags[row][col] = index
-    g_cellClickFlags[cellIndex(row, col)] = static_cast<std::int16_t>(index);
-
-    // asm: stride 8, fields at 0x172E..0x1734
-    changeList[index].tileId = static_cast<std::uint16_t>(tileId);
-    changeList[index].row    = static_cast<std::uint16_t>(row);
-    changeList[index].col    = static_cast<std::uint16_t>(col);
-    changeList[index].speed  = 0;
-
-    // asm: g_activeSpawnerCount++ ; return (old value)
-    g_activeSpawnerCount = static_cast<std::uint16_t>(g_activeSpawnerCount + 1);
-
-    return static_cast<std::int16_t>(index);
+    g_cellClickFlags[cellIndex(row, col)] = index;
+    g_gameState.entities[index].entityType = entityCode;
+    g_gameState.entities[index].row    = row;
+    g_gameState.entities[index].col    = col;
+    g_gameState.entities[index].animFrame  = 0;
+    ++g_activeSpawnerCount;
+    return index;
 }
 
-void pseudoRandomUpdate(uint32_t add)
+uint32_t pseudoRandomUpdate(uint32_t add)
 {
     uint32_t seed =
         (static_cast<uint32_t>(randomSeedHigh) << 16) |
         randomSeedLow;
 
-    // LCG style DOS
     seed = seed * 0x015A4E35u + 1u;
-
     seed += add;
 
     randomSeedHigh = static_cast<uint16_t>(seed >> 16);
-    randomSeedLow  = static_cast<uint16_t>(seed & 0xFFFF);
+    randomSeedLow  = static_cast<uint16_t>(seed);
+
+    return seed;   // ← IMPORTANT
 }
 
-void loadLevelRow(int col, const char* lineData)
+void loadLevelRow(int row, const char* lineData)
 {
-    if (col >= 20 || !lineData)
+    if (row >= GRID_ROWS) {
+        cout << "Row exeeding..." << row << endl;
         return;
+    }
+    const char* linePtr = lineData;
 
-    // Reset column
-    for (int row = 0; row < 30; ++row)
-        gameGrid[col][row] = 0xFFFF;
-
-    const char* ptr = lineData;
-    int row = 0;
-
-    while (*ptr && row < 30)
+    for (int col = 0; col < GRID_COLS; ++col)
+        g_gameState.tileMap[row][col] = EntityType::EMPTY_CELL;
+    
+    int col = 0;
+    while (*linePtr && col < GRID_COLS)
     {
-        uint16_t tileCode;
-        uint16_t tileType;
+        
+        char inputChar = *linePtr;
+        EntityType entityCode = EntityType::EMPTY_CELL;
+        uint8_t entityType = 0;
+        int ok = decodeTile(&entityType, &entityCode, inputChar);
 
-        if (!decodeTile(*ptr++, &tileCode, &tileType))
+        if (ok)
         {
-            row++;
-            continue;
-        }
-
-        switch (tileType)
-        {
-            case 0:
-                gameGrid[col][row] = 0xFFFF;
-                break;
-
-            case 1:
-                gameGrid[col][row] = tileCode;
-                break;
-
-            case 2:
+            switch (entityType)
             {
-                int changeIndex = registerLevelChange(col, row, tileCode);
+                case 0: // empty
+                    // cout << "Empty (" << row << ";" << col << ") =" << tileCode << endl;
+                    g_gameState.tileMap[row][col] = EntityType::EMPTY_CELL;
+                    break;
 
-                if (changeIndex >= 0)
+                case 1:
                 {
-                    changeList[changeIndex].speed = generateChangeSpeed();
+                    cout << "FIXED TILE (" << row << ";" << col << ") char="
+                        << inputChar << " code=" << (int)entityCode << endl;
+
+                    g_gameState.tileMap[row][col] = entityCode;
+                    break;
+                }
+                case 2: // entity
+                {
+                    cout << "Mobile entity (" << row << ";" << col << ") =" << (int)entityCode << endl;
+                    int changeIndex =
+                        addEntity(entityCode, row, col);
+
+                    if (changeIndex >= 0)
+                    {
+                        uint16_t rnd = pseudoRandomUpdate(0x8000);
+
+                        uint16_t anim = divide64_unsigned(rnd);
+
+                        g_gameState.entities[changeIndex].animFrame = anim;
+                    }
+                    break;
                 }
 
-                break;
+                case 3: // player spawn
+                {
+                    g_gameState.tileMap[row][col] = EntityType::KYE_LOCATION;
+                    cout << "setting Kye (" << row << ";" << col << ") =" << (int)entityCode << endl;
+                    srcRow = row;
+                    srcCol = col;   
+
+                    kyeRow = row;
+                    kyeCol = col;
+                    break;
+                }
             }
-
-            case 3:
-                gameGrid[col][row] = 0xFFFE;
-
-                srcRow   = row;
-                srcCol   = col;
-                spawnCol = row;
-                spawnRow = col;
-                break;
         }
 
-        row++;
+        ++linePtr;
+        ++col;
     }
 }
 
-static inline void invalidateCell(std::int16_t& cell) {
-    if (!isFixedTile(cell)) {
-        if (cell >= 0) {
-            markEntryInactive((int)cell);
-        }
-        cell = TILE_EXIT;
+static inline void invalidateCell(EntityType& cell)
+{
+    if (cell == EntityType::EMPTY)
+        return;
+
+    if (isFixedTile(cell))
+        return;
+
+    if (cell >= EntityType::EMPTY_CELL)
+    {
+        markEntryInactive((int)cell);
     }
+
+    cell = EntityType::EMPTY;
 }
 
 int postLoadLevel()
 {
-    bool hasSelectionSentinel = false;
-    for (int r = 0; r < GRID_ROWS && !hasSelectionSentinel; ++r) {
-        for (int c = 0; c < GRID_COLS ; ++c) {
-            if (g_gridMain[r][c] == TILE_SEL_SENTINEL) {
-                hasSelectionSentinel = true;
-                break;
-            }
-        }
-    }
-    if (!hasSelectionSentinel) {
-        selectionState = (uint16_t)TILE_SEL_SENTINEL;
+    remainingDiamondCount = 0;
+
+    for (int r = 0; r < GRID_ROWS; r++)
+    for (int c = 0; c < GRID_COLS; c++)
+    {
+        if (g_gameState.tileMap[r][c] == EntityType::DIAMOND)
+            remainingDiamondCount++;
     }
 
-    bool foundSpawn = false;
-    int foundR = 0, foundC = 0;
-    for (int r = 0; r < GRID_ROWS && !foundSpawn; ++r) {
-        for (int c = 0; c < GRID_COLS ; ++c) {
-            if (g_gridMain[r][c] == TILE_SPAWN) {
-                foundSpawn = true;
-                foundR = r;
-                foundC = c;
-                break;
-            }
+    bool playerFound = false;
+
+    for (int r = 0; r < GRID_ROWS; r++)
+    for (int c = 0; c < GRID_COLS; c++)
+    {
+        if (g_gameState.tileMap[r][c] == EntityType::KYE_LOCATION)
+        {
+            srcRow = r;
+            srcCol = c;
+            playerFound = true;
         }
     }
 
-    if (!foundSpawn || foundR != srcRow || foundC != srcCol) {
+    if (!playerFound)
+    {
+        cout << "Not found, resetting Kye location..." << endl;
         srcRow = 3;
         srcCol = 3;
-        spawnRow = 3;
-        spawnCol = 3;
-        selectedTileValue = (uint16_t)TILE_SPAWN;
+        kyeRow = 3;
+        kyeCol = 3;
+        selectedTileValue = EntityType::EMPTY;
     }
 
-    // C) invalidate 3 grilles
-    for (int r = 0; r < GRID_ROWS; ++r)
-        for (int c = 0; c < GRID_COLS; ++c)
-            invalidateCell(g_gridMain[r][c]);
-
-    for (int r = 0; r < GRID_ROWS; ++r)
-        for (int c = 0; c < GRID_COLS ; ++c)
-            invalidateCell(g_gridAuxA[r][c]);
-
-    for (int r = 0; r < GRID_ROWS; ++r)
-        for (int c = 0; c < GRID_COLS ; ++c)
-            invalidateCell(g_gridAuxB[r][c]);
-
     finalizeLevelVisuals();
-    return 1;
+    return 0;
 }
 
 int replaceEntityIfTargetMatches(int index, int newRow, int newCol)
 {
-    if (newRow < 0 || newRow >= GRID_ROWS || newCol < 0 || newCol >= GRID_COLS)
-        return 0;
+    // EntityType targetIndex = g_gameState.tileMap[newRow][newCol];
 
-    const int16_t targetIndex = g_entityIndexGrid[newRow][newCol];
-    if (targetIndex < 0)
-        return 0;
+    // if (targetIndex < 0)
+    //     return 0;
 
-    auto& slots = g_gameState.entities;
+    // EntityInfo& target = g_gameState.entities[targetIndex];
 
-    if (targetIndex >= static_cast<int16_t>(slots.size()) || index < 0 || index >= static_cast<int>(slots.size()))
-        return 0;
+    // if (target.entityType != EntityType(0x1F))
+    //     return 0;
 
-    auto& target   = slots[static_cast<size_t>(targetIndex)];
-    auto& attacker = slots[static_cast<size_t>(index)];
+    // EntityInfo& src = g_gameState.entities[index];
 
-    if (target.entityType != kTargetRequiredState)
-        return 0;
+    // int oldRow = src.row;
+    // int oldCol = src.col;
 
-    const int oldRow = attacker.row;
-    const int oldCol = attacker.col;
+    // target.entityType = EntityType(0x20);
+    // target.state = 0;
 
-    target.entityType = kTargetClearedState;
-    target.timer      = 0; // asm: [1734h] = 0
+    // moveAndRedrawEntity(targetIndex, newRow, newCol);
 
-    moveAndRedrawEntity(targetIndex, newRow, newCol);
-    drawRectangleFromGrid(oldRow, oldCol);
-    markEntryInactive(index);
+    // drawRectangleFromGrid(oldRow, oldCol);
+
+    // markEntryInactive(index);
 
     return 1;
 }
 
 void markEntryInactive(int index) {
     if (index >= 0 && index < MAX_CHANGES) {
-        changeList[index].tileId = 0x00FF;
+        g_gameState.entities[index].entityType = EntityType::EMPTY_CELL;
     }
 }
 
@@ -773,27 +754,36 @@ void finalizeLevelVisuals()
 
     while (i < g_activeSpawnerCount)
     {
-        if (changeList[i].tileId == 0x00FF)
-        {
-            --g_activeSpawnerCount;
-            for (int j = i; j < g_activeSpawnerCount; ++j)
-            {
-                changeList[j] = changeList[j + 1];
-            }
-            for (int row = 1; row < GRID_ROWS - 1; ++row)
-            {
-                for (int col = 1; col < GRID_COLS - 1; ++col)
-                {
-                    int16_t& val = g_entityIndexGrid[row][col];
+        EntityInfo& entity = g_gameState.entities[i];
 
-                    if (val > i)
-                        --val;
+        if (entity.entityType == EntityType::EMPTY_CELL)
+        {
+            if (g_activeSpawnerCount > 1)
+            {
+                g_activeSpawnerCount--;
+
+                for (int j = i; j < g_activeSpawnerCount; ++j)
+                {
+                    g_gameState.entities[j] = g_gameState.entities[j + 1];
+                }
+
+                for (int row = 0; row < GRID_ROWS; ++row)
+                {
+                    for (int col = 0; col < GRID_COLS; ++col)
+                    {
+                        EntityType& tile = g_gameState.tileMap[row][col];
+
+                        if (tile > (EntityType)i)
+                        {
+                            tile = (EntityType)((int)tile - 1);
+                        }
+                    }
                 }
             }
         }
         else
         {
-            ++i;
+            i++;
         }
     }
 }
@@ -815,7 +805,7 @@ void handleKyeMovement()
         srcCol = previousCol;
 
         if (0 <= srcRow && srcRow < GRID_ROWS && 0 <= srcCol && srcCol < GRID_COLS)
-            gameGrid[srcRow][srcCol] = CELL_FLAG_SENTINEL; // 0xFFFE
+            g_gameState.tileMap[srcRow][srcCol] = EntityType::KYE_LOCATION;
 
         runTileSparkleEffect(1);
         hasLevelTransition = 0;
@@ -845,44 +835,37 @@ void handlePointClick(int x, int y)
     advanceToNextLevelOrBlock();
 }
 
-int handlePendingBlock(std::int16_t rowIndex,
-                       std::int16_t colIndex)
+int handlePendingBlock(int rowIndex, int colIndex)
 {
-    // 1️⃣ Si déjà pending sur la même case → rien
+    int row = rowIndex;
+    int col = colIndex;
+
     if (isPendingDraw &&
-        pendingRow == rowIndex &&
-        pendingCol == colIndex)
+        pendingRow == row &&
+        pendingCol == col)
     {
         return 0;
     }
 
-    // 2️⃣ Efface ancien rectangle
     maybeDrawPendingRectangle();
 
-    pendingRow = rowIndex;
-    pendingCol = colIndex;
+    pendingRow = row;
+    pendingCol = col;
 
-    // 3️⃣ Distance absolue row
-    std::int16_t deltaRow = rowIndex - srcRow;
-    if (deltaRow < 0) deltaRow = -deltaRow;
-
-    if (deltaRow <= 1)
+    int dRow = std::abs(row - srcRow);
+    if (dRow <= 1)
     {
-        // Distance absolue col
-        std::int16_t deltaCol = colIndex - srcCol;
-        if (deltaCol < 0) deltaCol = -deltaCol;
-
-        if (deltaCol <= 1)
+        int dCol = std::abs(col - srcCol);
+        if (dCol <= 1)
         {
             return 0;
         }
     }
 
-    // 4️⃣ Vérifier si case vide
-    if (gameGrid[pendingRow][pendingCol] == CELL_FLAG_EMPTY)
+    if (g_gameState.tileMap[pendingRow][pendingCol] == EntityType::KYE_LOCATION)
     {
         drawPendingBlock();
-        isPendingDraw = true;
+        isPendingDraw = 1;
     }
 
     return 0;
@@ -890,11 +873,11 @@ int handlePendingBlock(std::int16_t rowIndex,
 
 int hasSpecialCell()
 {
-    for (int col = 0; col < GRID_COLS; ++col)
+    for (int row = 0; row < GRID_ROWS; ++row)
     {
-        for (int row = 0; row < GRID_ROWS; ++row)
+        for (int col = 0; col < GRID_COLS; ++col)
         {
-            if (gameGrid[row][col] == CELL_FLAG_SENTINEL)
+            if (g_gameState.tileMap[row][col] == EntityType::KYE_LOCATION)
             {
                 return 1;
             }
@@ -1121,36 +1104,36 @@ int prepareAndCallProcessMainLoop(char* outputBuffer, int stringId, int value)
 
 void handleMagnetVertical(int entityIndex)
 {
-    auto& state = g_gameState;
+    auto& s = g_gameState;
 
-    int row = state.entities[entityIndex].row;
-    int col = state.entities[entityIndex].col;
+    int row = s.entities[entityIndex].row;
+    int col = s.entities[entityIndex].col;
 
-    // ---- Case 1 : left empty + auxMap1282 == SENTINEL → move right
-    if (state.leftEntityMap[row][col] == CELL_FLAG_EMPTY &&
-        state.auxMap1282[row][col] == CELL_FLAG_SENTINEL)
+    // case 1
+    if (s.leftEntityMap[row][col] == -1 &&
+        s.auxMap1282[row][col] == static_cast<int16_t>(EntityType::KYE_LOCATION))
     {
         moveAndRedrawEntity(entityIndex, row, col + 1);
         handleUnknownEntityType(entityIndex);
         return;
     }
 
-    // ---- Case 2 : right empty + auxMap127A == SENTINEL → move left
-    if (state.rightEntityMap[row][col] == CELL_FLAG_EMPTY &&
-        state.auxMap127A[row][col] == CELL_FLAG_SENTINEL)
+    // case 2
+    if (s.rightEntityMap[row][col] == -1 &&
+        s.auxMap127A[row][col] == static_cast<int16_t>(EntityType::KYE_LOCATION))
     {
         moveAndRedrawEntity(entityIndex, row, col - 1);
         handleUnknownEntityType(entityIndex);
         return;
     }
 
-    // ---- Case 3 : bottom empty + spawner.state == 6 → move down
-    if (state.bottomEntityMap[row][col] == CELL_FLAG_EMPTY)
+    // case 3
+    if (s.bottomEntityMap[row][col] == -1)
     {
-        int spawnerIndex = state.auxMap12CE[row][col];
+        int auxIndex = s.auxMap12CE[row][col];
 
-        if (spawnerIndex >= 0 &&
-            g_spawners[spawnerIndex].type == EntityType::MagnetHorizontal)
+        if (auxIndex >= 0 &&
+            s.entities[auxIndex].entityType == EntityType::MagnetHorizontal)
         {
             moveAndRedrawEntity(entityIndex, row + 1, col);
             handleUnknownEntityType(entityIndex);
@@ -1158,13 +1141,13 @@ void handleMagnetVertical(int entityIndex)
         }
     }
 
-    // ---- Case 4 : top empty + spawner.state == 6 → move up
-    if (state.topEntityMap[row][col] == CELL_FLAG_EMPTY)
+    // case 4
+    if (s.topEntityMap[row][col] == -1)
     {
-        int spawnerIndex = state.auxMap127A[row][col];
+        int auxIndex = s.auxMap127A[row][col];
 
-        if (spawnerIndex >= 0 &&
-            g_spawners[spawnerIndex].type == EntityType::MagnetHorizontal)
+        if (auxIndex >= 0 &&
+            s.entities[auxIndex].entityType == EntityType::MagnetHorizontal)
         {
             moveAndRedrawEntity(entityIndex, row - 1, col);
             handleUnknownEntityType(entityIndex);
@@ -1177,36 +1160,36 @@ void handleMagnetVertical(int entityIndex)
 
 void handleMagnetHorizontal(int entityIndex)
 {
-    auto& state = g_gameState;
+    auto& s = g_gameState;
 
-    int row = state.entities[entityIndex].row;
-    int col = state.entities[entityIndex].col;
+    int row = s.entities[entityIndex].row;
+    int col = s.entities[entityIndex].col;
 
-    // ---- Case 1 : bottom empty + auxMap12CE == SENTINEL → move down
-    if (state.bottomEntityMap[row][col] == CELL_FLAG_EMPTY &&
-        state.auxMap12CE[row][col] == CELL_FLAG_SENTINEL)
+    // case 1
+    if (s.bottomEntityMap[row][col] == -1 &&
+        s.auxMap12CE[row][col] == static_cast<int16_t>(EntityType::KYE_LOCATION))
     {
         moveAndRedrawEntity(entityIndex, row + 1, col);
         handleUnknownEntityType(entityIndex);
         return;
     }
 
-    // ---- Case 2 : top empty + auxMap12CE == SENTINEL → move up
-    if (state.topEntityMap[row][col] == CELL_FLAG_EMPTY &&
-        state.auxMap12CE[row][col] == CELL_FLAG_SENTINEL)
+    // case 2
+    if (s.topEntityMap[row][col] == -1 &&
+        s.auxMap12CE[row][col] == static_cast<int16_t>(EntityType::KYE_LOCATION))
     {
         moveAndRedrawEntity(entityIndex, row - 1, col);
         handleUnknownEntityType(entityIndex);
         return;
     }
 
-    // ---- Case 3 : left empty + auxMap1282 → spawner.state == 5 → move right
-    if (state.leftEntityMap[row][col] == CELL_FLAG_EMPTY)
+    // case 3
+    if (s.leftEntityMap[row][col] == -1)
     {
-        int auxIndex = state.auxMap1282[row][col];
+        int auxIndex = s.auxMap1282[row][col];
 
         if (auxIndex >= 0 &&
-            g_spawners[auxIndex].type == EntityType::MagnetVertical)
+            s.entities[auxIndex].entityType == EntityType::MagnetVertical)
         {
             moveAndRedrawEntity(entityIndex, row, col + 1);
             handleUnknownEntityType(entityIndex);
@@ -1214,13 +1197,13 @@ void handleMagnetHorizontal(int entityIndex)
         }
     }
 
-    // ---- Case 4 : right empty + auxMap127A → spawner.state == 5 → move left
-    if (state.rightEntityMap[row][col] == CELL_FLAG_EMPTY)
+    // case 4
+    if (s.rightEntityMap[row][col] == -1)
     {
-        int auxIndex = state.auxMap127A[row][col];
+        int auxIndex = s.auxMap127A[row][col];
 
         if (auxIndex >= 0 &&
-            g_spawners[auxIndex].type == EntityType::MagnetVertical)
+            s.entities[auxIndex].entityType == EntityType::MagnetVertical)
         {
             moveAndRedrawEntity(entityIndex, row, col - 1);
             handleUnknownEntityType(entityIndex);
@@ -1256,44 +1239,31 @@ void adjustSmartEntityTarget(int entityIndex,
             if (row < 0 || row >= GRID_ROWS ||
                 col < 0 || col >= GRID_COLS)
                 return false;
-            return g_gameState.auxTopRightEntityMap[row][col] == CELL_FLAG_EMPTY;
+            return g_gameState.auxTopRightEntityMap[row][col] == (int)EntityType::EMPTY_CELL;
         };
 
         bool verticalEmpty   = isEmpty(curRow + dy, curCol);
         bool horizontalEmpty = isEmpty(curRow,       curCol + dx);
 
         if (verticalEmpty && horizontalEmpty) {
-            // Correspond à la branche où les deux tests sont 0xFFFF,
-            // puis comparaison des |cx| et |si|.
-            // L’ASM termine toujours en gardant uniquement l’axe horizontal
-            // dans ce cas (dy mis à 0, dx conservé).
             dy = 0;
         } else if (verticalEmpty) {
-            // loc_3317 : la case (curRow+dy, curCol) vide,
-            //           on met dx à 0 → on ne bouge que verticalement.
             dx = 0;
         } else if (horizontalEmpty) {
-            // loc_332B : la case (curRow, curCol+dx) vide,
-            //           on met dy à 0 → on ne bouge que horizontalement.
             dy = 0;
         } else {
-            // loc_3348 : aucune des deux n’est vide → on finit par
-            // mettre dy à 0 dans l’ASM, donc on ne bouge plus que
-            // horizontalement (ou pas du tout si dx==0).
             dy = 0;
         }
     }
 
-    // loc_334A : calcul de la case candidate (curRow + dy, curCol + dx)
     int candidateRow = curRow + dy;
     int candidateCol = curCol + dx;
 
-    // Re-test final sur auxRightEntityMap (0x127E)
     auto isEmpty = [](int row, int col) -> bool {
         if (row < 0 || row >= GRID_ROWS ||
             col < 0 || col >= GRID_COLS)
             return false;
-        return g_gameState.auxTopRightEntityMap[row][col] == CELL_FLAG_EMPTY;
+        return g_gameState.auxTopRightEntityMap[row][col] == (int)EntityType::EMPTY_CELL;
     };
 
     if (isEmpty(candidateRow, candidateCol)) {
@@ -1306,17 +1276,6 @@ static inline std::int16_t tileRandomCoord16()
 {
   const uint16_t r = pseudoRandomUpdate();
   return static_cast<std::int16_t>((r >> 11) & 0x000F);
-}
-
-const char* lookupText(uint16_t id) {
-    switch (id) {
-        case 0x29FA: return "???"; // à remplir quand tu dump les strings
-        default:     return "<unknown text>";
-    }
-}
-
-void setStatusTextFromId(uint16_t id) {
-    setStatusText(lookupText(id));
 }
 
 int16_t handleGameClick(int16_t x, int16_t y)
@@ -1367,7 +1326,7 @@ inline int countDiamondsInGrid()
     int count = 0;
     for (int row = 0; row < GRID_ROWS ; ++row) {
         for (int col = 0; col < GRID_COLS ; ++col) {
-            if (gameGrid[row][col] == (int)EntityType::Diamond) {
+            if (g_gameState.tileMap[row][col] == EntityType::DIAMOND) {
                 ++count;
             }
         }
@@ -1392,7 +1351,7 @@ int renderLivesAndLevelInfo()
         {
             for (int row = 0; row < 20; ++row)
             {
-                if (gameGrid[row][col] == (int)EntityType::Diamond)
+                if (g_gameState.tileMap[row][col] == EntityType::DIAMOND)
                     ++count;
             }
         }
@@ -1456,7 +1415,7 @@ int renderLivesAndLevelInfo()
     {
         for (int row = 0; row < GRID_ROWS; ++row)
         {
-            if (gameGrid[row][col] == (int)EntityType::Diamond)
+            if (g_gameState.tileMap[row][col] == EntityType::DIAMOND)
                 ++count;
         }
     }
@@ -1475,59 +1434,57 @@ void setStatusText(const std::string& text) {
 
 void handleClickOnGridCell(std::uint32_t cellId)
 {
-    const std::int16_t row = static_cast<std::int16_t>(cellId & 0xFFFF);
-    const std::int16_t col = static_cast<std::int16_t>((cellId >> 16) & 0xFFFF);
+    // const std::int16_t row = static_cast<std::int16_t>(cellId & 0xFFFF);
+    // const std::int16_t col = static_cast<std::int16_t>((cellId >> 16) & 0xFFFF);
 
-    if (g_gridMain[row][col] == CELL_FLAG_EMPTY)
-    {
-        const std::int16_t index = static_cast<std::int16_t>(g_currentNameIndex);
-        const std::int16_t stride = 0x1A / 2;
+    // if (g_gameState.tileMap[row][col] == EntityType::EMPTY_CELL)
+    // {
+    //     const std::int16_t index = static_cast<std::int16_t>(g_currentNameIndex);
+    //     const std::int16_t stride = 0x1A / 2;
 
-        extern std::int16_t g_entryRowTable[];
-        extern std::int16_t g_entryColTable[];
-        extern std::int16_t g_entryEnabledTable[];
+    //     extern std::int16_t g_entryRowTable[];
+    //     extern std::int16_t g_entryColTable[];
+    //     extern std::int16_t g_entryEnabledTable[];
 
-        const std::int16_t entryBase = static_cast<std::int16_t>(index * stride);
+    //     const std::int16_t entryBase = static_cast<std::int16_t>(index * stride);
 
-        if (g_entryEnabledTable[index] != 0)
-        {
-            executeCurrentEntryAction(
-                g_entryRowTable[entryBase],
-                g_entryColTable[entryBase],
-                row,
-                col
-            );
-            return;
-        }
-    }
+    //     if (g_entryEnabledTable[index] != 0)
+    //     {
+    //         executeCurrentEntryAction(
+    //             g_entryRowTable[entryBase],
+    //             g_entryColTable[entryBase],
+    //             row,
+    //             col
+    //         );
+    //         return;
+    //     }
+    // }
 
-    handleStandardCellClick(row, col);
+    // handleStandardCellClick(row, col);
 }
 
 int handleStandardCellClick(int row, int col)
 {
-    // ASM calcule l'offset: row*0x28 + col*2 sur un tableau word (0x28 = 40 bytes = 20 words)
-    // => ça correspond à un grid [20 cols] stocké row-major en int16.handleClickOnGridCell
-    std::int16_t& cell = g_gridAuxA[row][col];
+    EntityType cell = g_gameState.tileMap[row][col];
 
-    const std::int16_t di = cell; // copie (ASM garde DI pour le test sentinel après)
-
-    // if (di > 0) { markEntryInactive(di); cell = 0xFFFF; } else { cell = 0xFFFF; }
-    if (di > 0) {
-        markEntryInactive(di);
-        cell = CELL_FLAG_EMPTY;
-    } else {
-        cell = CELL_FLAG_EMPTY;
+    if (static_cast<int16_t>(cell) > 0)
+    {
+        markEntryInactive(static_cast<int>(cell));
+        g_gameState.tileMap[row][col] = EntityType::EMPTY_CELL;
+    }
+    else
+    {
+        g_gameState.tileMap[row][col] = EntityType::EMPTY_CELL;
     }
 
     finalizeLevelVisuals();
 
-    // si la valeur précédente était le sentinel spécial, on déclenche le handler
-    if (di == CELL_FLAG_SENTINEL) {
+    if (cell == EntityType::KYE_LOCATION)
+    {
         handleSpecialSentinelClick();
     }
 
-    return 0; // ASM ne set pas AX explicitement avant retn; on renvoie 0 par convention C
+    return 0;
 }
 
 void handleSpecialSentinelClick()
@@ -1548,46 +1505,66 @@ void handleSpecialSentinelClick()
     SDL_PushEvent(&ev);
 }
 
-void executeCurrentEntryAction(std::int16_t actionType,
-                               std::int16_t tileId,
-                               std::int16_t row,
-                               std::int16_t col)
+
+int executeCurrentEntryAction(int16_t actionType,
+                              EntityType type,
+                              int16_t row,
+                              int16_t col)
 {
-    const bool inBounds =
-        (col > 0 && col < (GRID_COLS - 1)) &&
-        (row > 0 && row < (GRID_ROWS - 1));
+    int16_t dx;
 
-    const bool invalidPos = !inBounds;
+    if (row <= 0 || row >= 0x1D || col <= 0 || col >= 0x13)
+        dx = 1;
+    else
+        dx = 0;
 
-    switch (actionType) {
-    case 1:
-        // ASM : écrit tileId dans la grille si la position est valide
-        if (!invalidPos) {
-            gameGrid[row][col] = static_cast<uint16_t>(tileId);
+    switch (actionType)
+    {
+        case 1:
+        {
+            if (type >= EntityType::TOP_RIGHT_ROUNDED_WALL && type <= EntityType::BOTTOM_LEFT_ROUND_WALL)
+            {
+                g_gameState.tileMap[row][col] = type;
+                return 0;
+            }
+
+            if (dx == 0)
+            {
+                g_gameState.tileMap[row][col] = type;
+                return 0;
+            }
+
+            break;
         }
-        break;
 
-    case 2:
-        // ASM : registerLevelChange(tileId, row, col) si position valide
-        if (!invalidPos) {
-            registerLevelChange(tileId, row, col);
+        case 2:
+        {
+            if (dx == 0)
+            {
+                addEntity(type, row, col);
+                return 0;
+            }
+
+            break;
         }
-        break;
 
-    case 3:
-        // ASM : pose un sentinel (0xFFFE), stocke srcRow/srcCol, puis handleSpecialSentinelClick
-        if (!invalidPos) {
-            gameGrid[row][col] = static_cast<uint16_t>(CELL_FLAG_SENTINEL);
-            srcRow = row;
-            srcCol = col;
-            handleSpecialSentinelClick();
+        case 3:
+        {
+            if (dx == 0)
+            {
+                g_gameState.tileMap[row][col] = EntityType::KYE_LOCATION;
+
+                srcRow = row;
+                srcCol = col;
+
+                handleSpecialSentinelClick();
+            }
+
+            break;
         }
-        break;
-
-    default:
-        // autres valeurs : no-op, comme dans l’ASM
-        break;
     }
+
+    return 0;
 }
 
 void updateGridCell(int row, int col)
@@ -1595,38 +1572,47 @@ void updateGridCell(int row, int col)
     if (!g_renderer)
         return;
 
-    uint16_t tile = g_gameState.entityMap[row][col];
+    int16_t tile = (int16_t)g_gameState.tileMap[row][col];
 
-    if (tile > 0)
+    if (tile >= 0)
     {
-        renderEntityToSdl(tile); // entités actives
+        renderEntity(tile);
+        return;
     }
-    else if (tile == 0xFFFE)
+    else if (tile == (int)EntityType::KYE_LOCATION)
     {
-        // Player / block special
         SDL_FRect dst{
             float(gridOriginX + col*cellWidth),
             float(gridOriginY + row*cellHeight),
             float(cellWidth),
             float(cellHeight)
         };
-        SDL_RenderTexture(g_renderer, g_sheetKye.tex, nullptr, &dst);
+        SDL_FRect src{
+            0.0f,
+            0.0f,
+            16.0f,
+            16.0f
+        };
+        SDL_RenderTexture(g_renderer, g_sheetKye.tex, &src, &dst);
     }
-    else if (tile == 0xFFFF)
+    else if (tile == (int)EntityType::EMPTY_CELL)
     {
         drawRectangleFromGrid(row, col); // case vide
     }
     else
     {
-        renderWallTile(row, col, tile); // murs
+        renderWallTile(row, col, (EntityType)tile);
     }
 }
 
-void renderWallTile(int row, int col, uint16_t tileValue)
+void renderWallTile(int row, int col, EntityType tileValue)
 {
-    if (!g_renderer || !bitmap_wall)
+    if (!g_renderer || !g_sheetStatics.tex) {
+        cout << 'Missing resources renderFullWallLayerSdl' << endl;
         return;
-
+    }
+    
+    // cout << "rendering (" << row << ";" << col << ") => " << (int)tileValue << endl;
     SDL_FRect dstRect{
         float(gridOriginX + col * cellWidth),
         float(gridOriginY + row * cellHeight),
@@ -1635,28 +1621,38 @@ void renderWallTile(int row, int col, uint16_t tileValue)
     };
 
     SDL_FRect srcRect{0.f, 0.f, 16.f, 16.f};
-
     switch (tileValue)
     {
-        case 0xFFFD: srcRect.x = 0x30; srcRect.y = 0x10; break;
-        case 0xFFFC: srcRect.x = 0x40; srcRect.y = 0x10; break;
-        case 0xFFFB: srcRect.x = 0x50; srcRect.y = 0x10; break;
-        case 0xFFFA: srcRect.x = 0x60; srcRect.y = 0x10; break;
-        case 0xFFF9: srcRect.x = 0x70; srcRect.y = 0x10; break;
-        case 0xFFF8: srcRect.x = 0x80; srcRect.y = 0x10; break;
-        case 0xFFF7: srcRect.x = 0x90; srcRect.y = 0x10; break;
-        case 0xFFF6: srcRect.x = 0xA0; srcRect.y = 0x10; break;
-        case 0xFFF5: srcRect.x = 0xB0; srcRect.y = 0x10; break;
-        case 0xFFF4: srcRect.x = 0xC0; srcRect.y = 0x10; break;
-        case (int)EntityType::Diamond: srcRect.x = 0xD0; srcRect.y = 0x10; break;
-        case 0xFFF2: srcRect.x = 0xE0; srcRect.y = 0x10; break;
-        case 0xFFF1: srcRect.x = 0xF0; srcRect.y = 0x10; break;
-        case 0xFFF0: srcRect.x = 0x00; srcRect.y = 0x20; break;
-        case 0xFFEF: srcRect.x = 0x10; srcRect.y = 0x20; break;
-        default: return;
-    }
+        case EntityType::BOTTOM_LEFT_ROUND_WALL: srcRect.x = 0x30; srcRect.y = 0x00; break;
+        case EntityType::BOTTOM_ROUNDED_WALL: srcRect.x = 0x40; srcRect.y = 0x00; break;
+        case EntityType::BOTTOM_RIGHT_ROUND_WALL: srcRect.x = 0x50; srcRect.y = 0x00; break;
+        case EntityType::LEFT_ROUNDED_WALL: srcRect.x = 0x60; srcRect.y = 0x00; break;
+        case EntityType::SQUARE_WALL: srcRect.x = 0x70; srcRect.y = 0x00; break;
+        case EntityType::RIGHT_ROUNDED_WALL: srcRect.x = 0x80; srcRect.y = 0x00; break;
+        case EntityType::TOP_LEFT_ROUNDED_WALL: srcRect.x = 0x90; srcRect.y = 0x00; break;
+        case EntityType::TOP_ROUNDED_WALL: srcRect.x = 0xA0; srcRect.y = 0x00; break;
+        case EntityType::TOP_RIGHT_ROUNDED_WALL: srcRect.x = 0xB0; srcRect.y = 0x00; break;
+        case EntityType::BREAKABLE_BRICK: srcRect.x = 0x00; srcRect.y = 0x00; break;
+        case EntityType::DIAMOND: srcRect.x = 0xC0; srcRect.y = 0x10; break;
+        case EntityType::ONE_WAY_LEFT_TO_RIGHT_PORTAL: srcRect.x = 0xE0; srcRect.y = 0x00; break;
+        case EntityType::ONE_WAY_RIGHT_TO_LEFT_PORTAL: srcRect.x = 0xE0; srcRect.y = 0x10; break;
+        case EntityType::ONE_WAY_TOP_TO_BOTTOM: srcRect.x = 0xD0; srcRect.y = 0x0; break;
+        case EntityType::ONE_WAY_BOTTOM_TO_TOP: srcRect.x = 0xD0; srcRect.y = 0x10; break;
+        default:
+        {
+            SDL_FRect r{
+                float(gridOriginX + col * cellWidth),
+                float(gridOriginY + row * cellHeight),
+                float(cellWidth),
+                float(cellHeight)
+            };
 
-    SDL_RenderTexture(g_renderer, bitmap_wall, &srcRect, &dstRect);
+            SDL_SetRenderDrawColor(g_renderer,255,255,255,255);
+            SDL_RenderFillRect(g_renderer,&r);
+            return;
+        }
+    }
+    SDL_RenderTexture(g_renderer, g_sheetStatics.tex, &srcRect, &dstRect);
 }
 
 void cancelPendingInteraction()
@@ -1956,16 +1952,16 @@ void animateLava()
     if (frameCounter % 5 != 0)
         return;
 
-    for (std::int16_t i = 0; i < g_activeSpawnerCount && i < g_spawners.size(); ++i)
+    for (std::int16_t i = 0; i < g_activeSpawnerCount && i < g_gameState.entities.size(); ++i)
     {
-        Spawner& spawner = g_spawners[i];
+        EntityInfo& entity = g_gameState.entities[i];
 
-        const int dstY = spawner.row * cellHeight;
-        const int dstX = spawner.col * cellWidth;
+        const int dstY = entity.row * cellHeight;
+        const int dstX = entity.col * cellWidth;
 
-        const int srcX = 0x40 + (spawner.animFrame << 4);
+        const int srcX = 0x40 + (entity.animFrame << 4);
 
-        if (spawner.type == EntityType::Lava) // 0x1F
+        if (entity.entityType == EntityType::Lava) // 0x1F
         {
             g_blockSheet.blit16(
                 dstX,
@@ -1974,9 +1970,9 @@ void animateLava()
                 0x80
             );
 
-            spawner.animFrame = (spawner.animFrame + 1) % 4;
+            entity.animFrame = (entity.animFrame + 1) % 4;
         }
-        else if (spawner.type == EntityType::Lava2) // 0x20
+        else if (entity.entityType == EntityType::Lava2) // 0x20
         {
             g_blockSheet.blit16(
                 dstX,
@@ -1985,10 +1981,10 @@ void animateLava()
                 0x90
             );
 
-            if (spawner.animFrame == 3)
-                spawner.type = EntityType::Lava;
+            if (entity.animFrame == 3)
+                entity.entityType = EntityType::Lava;
 
-            spawner.animFrame = (spawner.animFrame + 1) % 4;
+            entity.animFrame = (entity.animFrame + 1) % 4;
         }
     }
 }
@@ -2004,7 +2000,7 @@ void animateDiamonds()
     {
         for (int col = 0; col < GRID_COLS; col++)
         {
-            if (gameGrid[row][col] != (uint16_t)EntityType::Diamond)
+            if (g_gameState.tileMap[row][col] != EntityType::DIAMOND)
                 continue;
 
             int dstX = col * cellWidth;
@@ -2048,17 +2044,17 @@ void animateOneWayTilesEvery4Frames()
     {
         for (int col = 0; col < GRID_COLS; col++)
         {
-            uint16_t tile = gameGrid[row][col];
+            EntityType tile = g_gameState.tileMap[row][col];
 
             int spriteY = -1;
 
-            if (tile == (uint16_t)EntityType::OneWayLeftToRight ||
-                tile == (uint16_t)EntityType::OneWayRightToLeft)
+            if (tile == EntityType::ONE_WAY_LEFT_TO_RIGHT_PORTAL ||
+                tile == EntityType::ONE_WAY_RIGHT_TO_LEFT_PORTAL)
             {
                 spriteY = 0xE0;
             }
-            else if (tile == (uint16_t)EntityType::OneWayTopToBottom ||
-                     tile == (uint16_t)EntityType::OneWayBottomToTop)
+            else if (tile == EntityType::ONE_WAY_TOP_TO_BOTTOM ||
+                     tile == EntityType::ONE_WAY_BOTTOM_TO_TOP)
             {
                 spriteY = 0xD0;
             }
@@ -2079,33 +2075,14 @@ void animateOneWayTilesEvery4Frames()
     }
 }
 
-static inline bool isCellEmpty_asmLayout(int row, int col)
+void def_5AE1_tryPlaceAndSpawn(int row, int col, EntityType type, uint16_t* spawnCounterPtr)
 {
-    return gameGrid[col][row] == 0xFFFF;
+    placeTileAndSpawnEntityIfEmpty_Core(row, col, type, spawnCounterPtr);
 }
 
-static void placeTileAndSpawnEntityIfEmpty_Core(
-    int row, int col, int tileId,
-    uint16_t* spawnCounterPtr
-)
+void def_5BCD_tryPlaceAndSpawn(int row, int col, EntityType type, uint16_t* spawnCounterPtr)
 {
-    if (!isCellEmpty_asmLayout(row, col))
-        return;
-
-    *spawnCounterPtr = 0;
-
-    const int spawnedEntityIndex = registerLevelChange(tileId, row, col);
-    moveAndRedrawEntity(spawnedEntityIndex, row, col);
-}
-
-void def_5AE1_tryPlaceAndSpawn(int row, int col, int tileId, uint16_t* spawnCounterPtr)
-{
-    placeTileAndSpawnEntityIfEmpty_Core(row, col, tileId, spawnCounterPtr);
-}
-
-void def_5BCD_tryPlaceAndSpawn(int row, int col, int tileId, uint16_t* spawnCounterPtr)
-{
-    placeTileAndSpawnEntityIfEmpty_Core(row, col, tileId, spawnCounterPtr);
+    placeTileAndSpawnEntityIfEmpty_Core(row, col, type, spawnCounterPtr);
 }
 
 static inline bool isInBounds(int r, int c)
@@ -2130,56 +2107,56 @@ void tickSpawnersEvery7Frames()
 
     for (int i = 0; i < g_activeSpawnerCount; ++i)
     {
-        Spawner& sp = g_spawners[i];
+        EntityInfo& entity = g_gameState.entities[i];
 
-        int row = sp.row;
-        int col = sp.col;
+        int row = entity.row;
+        int col = entity.col;
 
-        sp.animFrame++;
+        entity.animFrame++;
 
         int targetRow = row;
         int targetCol = col;
-        EntityType spawnType = EntityType::None;
+        EntityType entityType = EntityType::EMPTY_CELL;
 
-        switch(sp.type)
+        switch(entity.entityType)
         {
             case EntityType::UnknownA1:
-                spawnType = EntityType::ArrowRight;
+                entityType = EntityType::ArrowRight;
                 targetRow = row + 1;
                 break;
 
             case EntityType::UnknownA2:
-                spawnType = EntityType::ArrowUp;
+                entityType = EntityType::ARROW_UP;
                 targetCol = col - 1;
                 break;
 
             case EntityType::UnknownA3:
-                spawnType = EntityType::ArrowLeft;
+                entityType = EntityType::ArrowLeft;
                 targetRow = row - 1;
                 break;
 
             case EntityType::UnknownA4:
-                spawnType = EntityType::ArrowDown;
+                entityType = EntityType::ARROW_DOWN;
                 targetCol = col + 1;
                 break;
 
-            case EntityType::Dispenser1:
-                spawnType = EntityType::CurvedArrowRight;
+            case EntityType::DISPENSER1:
+                entityType = EntityType::CURVED_ARROW_RIGHT;
                 targetRow = row + 1;
                 break;
 
-            case EntityType::Dispenser2:
-                spawnType = EntityType::CurvedArrowUp;
+            case EntityType::DISPENSER2:
+                entityType = EntityType::CURVED_ARROW_UP;
                 targetCol = col - 1;
                 break;
 
-            case EntityType::Dispenser3:
-                spawnType = EntityType::CurvedArrowLeft;
+            case EntityType::DISPENSER3:
+                entityType = EntityType::CURVED_ARROW_LEFT;
                 targetRow = row - 1;
                 break;
 
-            case EntityType::Dispenser4:
-                spawnType = EntityType::CurvedArrowDown;
+            case EntityType::DISPENSER4:
+                entityType = EntityType::CURVED_ARROW_DOWN;
                 targetCol = col + 1;
                 break;
 
@@ -2187,10 +2164,10 @@ void tickSpawnersEvery7Frames()
                 continue;
         }
 
-        if (gameGrid[targetRow][targetCol] == CELL_FLAG_EMPTY)
+        if (g_gameState.tileMap[targetRow][targetCol] == EntityType::EMPTY_CELL)
         {
-            int entityIndex = registerLevelChange(
-                (uint16_t)spawnType,
+            int entityIndex = addEntity(
+                entityType,
                 targetRow,
                 targetCol
             );
@@ -2202,29 +2179,33 @@ void tickSpawnersEvery7Frames()
     finalizeLevelVisuals();
 }
 
-void trySpawnFromGroupBIfTargetEmpty(int targetRow, int targetCol, int spawnTileId, uint16_t& spawnDelayCounter)
-{
-    spawnAtIfEmpty(targetRow, targetCol, spawnTileId, spawnDelayCounter);
-}
-
 inline bool isGridCellEmpty(int targetRow, int targetCol)
 {
-    return gameGrid[targetCol][targetRow] == 0xFFFF;
+    return g_gameState.tileMap[targetCol][targetRow] == EntityType::EMPTY;
 }
 
-void trySpawnFromGroupAIfTargetEmpty(int targetRow, int targetCol, int spawnTileId, uint16_t& spawnDelayCounter)
+static void placeTileAndSpawnEntityIfEmpty_Core(
+    int row, int col, EntityType type,
+    uint16_t* spawnCounterPtr
+)
 {
-    spawnAtIfEmpty(targetRow, targetCol, spawnTileId, spawnDelayCounter);
+    if (!isGridCellEmpty(row, col))
+        return;
+
+    *spawnCounterPtr = 0;
+
+    const int spawnedEntityIndex = addEntity(type, row, col);
+    moveAndRedrawEntity(spawnedEntityIndex, row, col);
 }
 
-inline void spawnAtIfEmpty(int targetRow, int targetCol, int spawnTileId, uint16_t& spawnDelayCounter)
+inline void spawnAtIfEmpty(int targetRow, int targetCol, EntityType type, uint16_t& spawnDelayCounter)
 {
     if (!isGridCellEmpty(targetRow, targetCol))
         return;
 
     spawnDelayCounter = 0;
 
-    const int spawnedEntityIndex = registerLevelChange(spawnTileId, targetRow, targetCol);
+    const int spawnedEntityIndex = addEntity(type, targetRow, targetCol);
     moveAndRedrawEntity(spawnedEntityIndex, targetRow, targetCol);
 }
 
@@ -2242,20 +2223,20 @@ void animateMonsters()
     if (frameCounter % 3 != 0)
         return;
 
-    for (std::int16_t i = 0; i < g_activeSpawnerCount && i < g_spawners.size(); ++i)
+    for (std::int16_t i = 0; i < g_activeSpawnerCount && i < g_gameState.entities.size(); ++i)
     {
-        Spawner& spawner = g_spawners[i];
+        EntityInfo& entity = g_gameState.entities[i];
 
-        const int type = static_cast<int>(spawner.type);
+        const int type = static_cast<int>(entity.entityType);
 
         if (type < 0x0F || type > 0x13)
             continue;
 
-        const int dstY = spawner.row * cellHeight;
-        const int dstX = spawner.col * cellWidth;
+        const int dstY = entity.row * cellHeight;
+        const int dstX = entity.col * cellWidth;
 
         const int srcX = type << 4;
-        const int srcY = spawner.animFrame << 4;
+        const int srcY = entity.animFrame << 4;
 
         g_blockSheet.blit16(
             dstX,
@@ -2264,7 +2245,7 @@ void animateMonsters()
             srcY
         );
 
-        spawner.animFrame = (spawner.animFrame + 1) % 4;
+        entity.animFrame = (entity.animFrame + 1) % 4;
     }
 }
 
@@ -2493,7 +2474,7 @@ int clearStatusLine(const char* str)
     return 1;
 }
 
-void renderFullWallLayerSdl()
+void renderFullWallLayer()
 {
     if (!g_renderer || !g_sheetStatics.tex)
         return;
@@ -2502,39 +2483,66 @@ void renderFullWallLayerSdl()
     {
         for (int col = 0; col < GRID_COLS; ++col)
         {
-            uint16_t tileValue = g_gameState.entityMap[row][col];
-            renderWallTile(row, col, tileValue);
+            const EntityType tileValue = g_gameState.tileMap[row][col];
+
+            if (tileValue == EntityType::EMPTY_CELL)
+            {
+                SDL_FRect dst{
+                    float(gridOriginX + col * cellWidth),
+                    float(gridOriginY + row * cellHeight),
+                    float(cellWidth),
+                    float(cellHeight)
+                };
+
+                SDL_SetRenderDrawColor(g_renderer,255,255,255,255);
+                SDL_RenderFillRect(g_renderer,&dst);
+                continue;
+            }
+
+            if (tileValue >= EntityType::ONE_WAY_TOP_TO_BOTTOM)
+            {
+                renderWallTile(row, col, tileValue);
+            }
         }
     }
 }
 
-void renderAllSpawnerEntities()
+void renderAllEntities()
 {
-    for (int16_t i = 0; i < g_activeSpawnerCount; ++i) {
-        renderEntityToSdl(i);
+    for (int i = 0; i < g_activeSpawnerCount ; ++i)
+    {
+        renderEntity(i);
     }
 }
 
-void renderFrameByInteractionMode()
+void renderAllObjects()
 {
-    const auto mode = g_interactionMode;
+    if (g_interactionMode == GameInteractionMode::NormalPlay)
+    {
+        renderFullWallLayer();
+        renderAllEntities();
 
-    if (mode != GameInteractionMode::NormalPlay &&
-        mode != GameInteractionMode::PendingBlock) {
+        if (g_levelJustLoadedFlag)
+        {
+            g_levelJustLoadedFlag = 0;
+            runTileSparkleEffect(1);
+        }
+        else
+        {
+            runTileSparkleEffect(0);
+        }
         return;
     }
 
-    renderFullWallLayerSdl();
-    renderAllSpawnerEntities();
-
-    if (mode == GameInteractionMode::PendingBlock) {
+    if (g_interactionMode == GameInteractionMode::PendingBlock)
+    {
+        renderFullWallLayer();
+        renderAllEntities();
         runTileSparkleEffect(0);
         return;
     }
 
-    const int effectId = (g_levelJustLoadedFlag != 0) ? 1 : 0;
-    g_levelJustLoadedFlag = 0;
-    runTileSparkleEffect(effectId);
+    return;
 }
 
 static void dispatchEventWithDefaults(int16_t eventCode)
@@ -2603,21 +2611,10 @@ void destroyGraphicsResources()
 
 void handlePaintOrRenderRequest()
 {
-    if (g_hasDeviceContext)
-    {
-        advanceToNextLevelOrBlock();
-    }
-
-    g_hasDeviceContext = true;
-
-    initializeLayoutRects();
-
-    // Clear frame
     SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
     SDL_RenderClear(g_renderer);
-    renderHudAndFrame();
+    renderAllObjects();
     SDL_RenderPresent(g_renderer);
-    g_hasDeviceContext = false;
 }
 
 void handleEvent(const SDL_Event& e)
@@ -2781,17 +2778,17 @@ void processKyeCollision(int stepRow, int stepCol)
         newCol < 0 || newCol >= GRID_COLS)
         return;
 
-    int16_t cell = gameGrid[newRow][newCol];
+    EntityType cell = g_gameState.tileMap[newRow][newCol];
 
     // =========================================================
     // 2️⃣ Case vide
     // =========================================================
-    if (cell == CELL_FLAG_EMPTY)
+    if (cell == EntityType::EMPTY_CELL)
     {
-        gameGrid[srcRow][srcCol] = CELL_FLAG_EMPTY;
+        g_gameState.tileMap[srcRow][srcCol] = EntityType::EMPTY_CELL;
         srcRow = newRow;
         srcCol = newCol;
-        gameGrid[srcRow][srcCol] = CELL_FLAG_SENTINEL;
+        g_gameState.tileMap[srcRow][srcCol] = EntityType::KYE_LOCATION;
         return;
     }
 
@@ -2801,108 +2798,108 @@ void processKyeCollision(int stepRow, int stepCol)
 
     switch (cell)
     {
-        case 0xFFF4:  // brick
-            cell = CELL_FLAG_EMPTY;
+        case EntityType::BREAKABLE_BRICK:
+            cell = EntityType::EMPTY_CELL;
             break;
 
-        case (int)EntityType::Diamond:  // diamond
-            cell = CELL_FLAG_EMPTY;
+        case EntityType::DIAMOND:
+            cell = EntityType::EMPTY_CELL;
             --matchedEntryCount;
             break;
 
-        case 0xFFF2:  // one-way →
+        case EntityType::ONE_WAY_LEFT_TO_RIGHT_PORTAL:
             if (stepRow == 0 && stepCol == 1) break;
             return;
 
-        case 0xFFF1:  // one-way ←
+        case EntityType::ONE_WAY_RIGHT_TO_LEFT_PORTAL:
             if (stepRow == 0 && stepCol == -1) break;
             return;
 
-        case 0xFFF0:  // one-way ↓
+        case EntityType::ONE_WAY_TOP_TO_BOTTOM:
             if (stepRow == 1 && stepCol == 0) break;
             return;
 
-        case 0xFFEF:  // one-way ↑
+        case EntityType::ONE_WAY_BOTTOM_TO_TOP:
             if (stepRow == -1 && stepCol == 0) break;
             return;
     }
 
-    if (cell >= 0)
+    if (cell >= EntityType::EMPTY_CELL)
     {
-        const int entityIndex = cell;
-        const int entityBase = entityIndex * 8;
+        const EntityType entityIndex = cell;
+        // const int entityBase = entityIndex * 8;
 
-        const int entityType =
-            *reinterpret_cast<int16_t*>(
-                reinterpret_cast<uint8_t*>(EntityTable) +
-                entityBase + 0
-            );
+        // const int entityType =
+        //     *reinterpret_cast<int16_t*>(
+        //         reinterpret_cast<uint8_t*>(EntityTable) +
+        //         entityBase + 0
+        //     );
 
-        if (entityType == (int)EntityType::Lava)
-        {
-            --remainingLives;
-            renderLivesAndLevelInfo();
-            return;
-        }
+        // if (entityType == (int)EntityType::Lava)
+        // {
+        //     --remainingLives;
+        //     renderLivesAndLevelInfo();
+        //     return;
+        // }
 
         // 0x20 → bloquant
-        if (entityType == 0x20)
-            return;
+        // if (entityType == 0x20)
+        //     return;
 
-        const int targetRow =
-            *reinterpret_cast<int16_t*>(
-                reinterpret_cast<uint8_t*>(EntityTable) +
-                entityBase + 2
-            ) + stepRow;
+        // const int targetRow =
+        //     *reinterpret_cast<int16_t*>(
+        //         reinterpret_cast<uint8_t*>(EntityTable) +
+        //         entityBase + 2
+        //     ) + stepRow;
 
-        const int targetCol =
-            *reinterpret_cast<int16_t*>(
-                reinterpret_cast<uint8_t*>(EntityTable) +
-                entityBase + 4
-            ) + stepCol;
+        // const int targetCol =
+        //     *reinterpret_cast<int16_t*>(
+        //         reinterpret_cast<uint8_t*>(EntityTable) +
+        //         entityBase + 4
+        //     ) + stepCol;
 
-        if (targetRow < 0 || targetRow >= GRID_ROWS ||
-            targetCol < 0 || targetCol >= GRID_COLS)
-            return;
+        // if (targetRow < 0 || targetRow >= GRID_ROWS ||
+        //     targetCol < 0 || targetCol >= GRID_COLS)
+        //     return;
 
-        if (gameGrid[targetRow][targetCol] != CELL_FLAG_EMPTY)
-            return;
+        // if (g_gameState.tileMap[targetRow][targetCol] != EntityType::EMPTY_CELL)
+        //     return;
 
-        // déplacer entité
-        gameGrid[targetRow][targetCol] = entityIndex;
-        gameGrid[newRow][newCol] = CELL_FLAG_EMPTY;
+        // // déplacer entité
+        // g_gameState.tileMap[targetRow][targetCol] = entityIndex;
+        // g_gameState.tileMap[newRow][newCol] = EntityType::EMPTY_CELL;
 
-        // déplacer Kye
-        gameGrid[srcRow][srcCol] = CELL_FLAG_EMPTY;
-        srcRow = newRow;
-        srcCol = newCol;
-        gameGrid[srcRow][srcCol] = CELL_FLAG_SENTINEL;
+        // // déplacer Kye
+        // g_gameState.tileMap[srcRow][srcCol] = EntityType::EMPTY_CELL;
+        // srcRow = newRow;
+        // srcCol = newCol;
+        // g_gameState.tileMap[srcRow][srcCol] = EntityType::CELL_FLAG_SENTINEL;
 
-        return;
+        // return;
     }
 }
 
 // --- Common handler for “smart” mobile entities (type 0, 20–26, etc.) ---
 void handleSmartEntityCommon(int entityIndex) {
-    if (!tryMoveSmartEntity(entityIndex))
+    if (!tryMoveMagnet(entityIndex))
         return;
 }
 
 // --- Alternative handler for “smart” entities (type 50–59) ---
 void handleSmartEntityAlt(int entityIndex) {
-    if (!tryMoveSmartEntity(entityIndex))
+    if (!tryMoveMagnet(entityIndex))
         return;
 }
 
 void handleArrowUp(int entityIndex)
 {
-    if (tryMoveSmartEntity(entityIndex) != 0)
+    if (tryMoveMagnet(entityIndex) != 0)
     {
         handleUnknownEntityType(entityIndex);
         return;
     }
 
-    if (canEntityMove(entityIndex) != 0)
+    if (canEntityMoveMagnet(entityIndex) != 0)
     {
         handleUnknownEntityType(entityIndex);
         return;
@@ -2911,215 +2908,214 @@ void handleArrowUp(int entityIndex)
     const int newRow = pendingRow;
     const int newCol = pendingCol;
 
-    const int targetIndex = g_gameState.rightEntityMap[newRow][newCol];
+    const int16_t targetIndex = g_gameState.rightEntityMap[newRow][newCol];
 
-    if (targetIndex == CELL_FLAG_EMPTY)
-    {
-        moveAndRedrawEntity(entityIndex, newRow, newCol - 1);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (targetIndex == EntityType::EMPTY_CELL)
+    // {
+    //     moveAndRedrawEntity(entityIndex, newRow, newCol - 1);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (replaceEntityIfTargetMatches(entityIndex, newRow, newCol - 1) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (replaceEntityIfTargetMatches(entityIndex, newRow, newCol - 1) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (targetIndex >= 0)
-    {
-        const EntityType targetType =
-            static_cast<EntityType>(g_spawners[targetIndex].type);
+    // if (targetIndex >= EntityType::EMPTY_CELL)
+    // {
+    //     const EntityType targetType = g_gameState.entities[targetIndex].entityType;
 
-        if (targetType == EntityType::DeflectorRight)
-        {
-            g_spawners[entityIndex].type = EntityType::ArrowRight;
-            handleUnknownEntityType(entityIndex);
-            return;
-        }
+    //     if (targetType == EntityType::DEFLECTOR_RIGHT)
+    //     {
+    //         g_gameState.entities[entityIndex].entityType = EntityType::ArrowRight;
+    //         handleUnknownEntityType(entityIndex);
+    //         return;
+    //     }
 
-        if (targetType == EntityType::DeflectorLeft)
-        {
-            g_spawners[entityIndex].type = EntityType::ArrowLeft;
-            handleUnknownEntityType(entityIndex);
-            return;
-        }
-    }
+    //     if (targetType == EntityType::DEFLECTOR_LEFT)
+    //     {
+    //         g_gameState.entities[entityIndex].entityType= EntityType::ArrowLeft;
+    //         handleUnknownEntityType(entityIndex);
+    //         return;
+    //     }
+    // }
 
     handleUnknownEntityType(entityIndex);
 }
 
 void handleArrowDown(int entityIndex)
 {
-    if (tryMoveSmartEntity(entityIndex) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (tryMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (canEntityMove(entityIndex) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (canEntityMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    const int newRow = pendingRow;
-    const int newCol = pendingCol;
+    // const int newRow = pendingRow;
+    // const int newCol = pendingCol;
 
-    const int targetIndex = g_gameState.leftEntityMap[newRow][newCol];
+    // const EntityType targetIndex = g_gameState.leftEntityMap[newRow][newCol];
 
-    if (targetIndex == CELL_FLAG_EMPTY)
-    {
-        moveAndRedrawEntity(entityIndex, newRow, newCol + 1);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (targetIndex == EntityType::EMPTY_CELL)
+    // {
+    //     moveAndRedrawEntity(entityIndex, newRow, newCol + 1);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (replaceEntityIfTargetMatches(entityIndex, newRow, newCol + 1) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (replaceEntityIfTargetMatches(entityIndex, newRow, newCol + 1) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (targetIndex >= 0)
-    {
-        const EntityType targetType =
-            static_cast<EntityType>(g_spawners[targetIndex].type);
+    // if (targetIndex >= EntityType::EMPTY_CELL)
+    // {
+    //     const EntityType targetType =
+    //         g_gameState.entities(targetIndex).entityType;
 
-        if (targetType == EntityType::DeflectorLeft)
-        {
-            g_spawners[entityIndex].type = EntityType::ArrowLeft;
-            moveAndRedrawEntity(entityIndex, newRow, newCol);
-            handleUnknownEntityType(entityIndex);
-            return;
-        }
+    //     if (targetType == EntityType::DEFLECTOR_LEFT)
+    //     {
+    //         g_gameState.entities[entityIndex].entityType = EntityType::ArrowLeft;
+    //         moveAndRedrawEntity(entityIndex, newRow, newCol);
+    //         handleUnknownEntityType(entityIndex);
+    //         return;
+    //     }
 
-        if (targetType == EntityType::DeflectorRight)
-        {
-            g_spawners[entityIndex].type = EntityType::ArrowRight;
-            moveAndRedrawEntity(entityIndex, newRow, newCol);
-            handleUnknownEntityType(entityIndex);
-            return;
-        }
-    }
+    //     if (targetType == EntityType::DEFLECTOR_RIGHT)
+    //     {
+    //         g_gameState.entities[entityIndex].entityType = EntityType::ArrowRight;
+    //         moveAndRedrawEntity(entityIndex, newRow, newCol);
+    //         handleUnknownEntityType(entityIndex);
+    //         return;
+    //     }
+    // }
 
-    handleUnknownEntityType(entityIndex);
+    // handleUnknownEntityType(entityIndex);
 }
 
 void handleArrowLeft(int entityIndex)
 {
-    if (tryMoveSmartEntity(entityIndex) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (tryMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (canEntityMove(entityIndex) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (canEntityMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    const int newRow = pendingRow;
-    const int newCol = pendingCol;
+    // const int newRow = pendingRow;
+    // const int newCol = pendingCol;
 
-    const int targetIndex = g_gameState.topEntityMap[newRow][newCol];
+    // const EntityType targetIndex = g_gameState.topEntityMap[newRow][newCol];
 
-    if (targetIndex == CELL_FLAG_EMPTY)
-    {
-        moveAndRedrawEntity(entityIndex, newRow - 1, newCol);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (targetIndex == EntityType::EMPTY_CELL)
+    // {
+    //     moveAndRedrawEntity(entityIndex, newRow - 1, newCol);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (replaceEntityIfTargetMatches(entityIndex, newRow - 1, newCol) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (replaceEntityIfTargetMatches(entityIndex, newRow - 1, newCol) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (targetIndex >= 0)
-    {
-        const EntityType targetType = g_spawners[targetIndex].type;
+    // if (targetIndex >= EntityType::EMPTY_CELL)
+    // {
+    //     const EntityType targetType = g_gameState.entities[targetIndex].entityType;
 
-        if (targetType == EntityType::DeflectorLeft)
-        {
-            g_spawners[entityIndex].type = EntityType::ArrowUp;
-            moveAndRedrawEntity(entityIndex, newRow, newCol);
-            handleUnknownEntityType(entityIndex);
-            return;
-        }
+    //     if (targetType == EntityType::DEFLECTOR_LEFT)
+    //     {
+    //         g_gameState.entities[entityIndex].entityType = EntityType::ARROW_UP;
+    //         moveAndRedrawEntity(entityIndex, newRow, newCol);
+    //         handleUnknownEntityType(entityIndex);
+    //         return;
+    //     }
 
-        if (targetType == EntityType::DeflectorRight)
-        {
-            g_spawners[entityIndex].type = EntityType::ArrowDown;
-            moveAndRedrawEntity(entityIndex, newRow, newCol);
-            handleUnknownEntityType(entityIndex);
-            return;
-        }
-    }
+    //     if (targetType == EntityType::DEFLECTOR_RIGHT)
+    //     {
+    //         g_gameState.entities[entityIndex].entityType = EntityType::ARROW_DOWN;
+    //         moveAndRedrawEntity(entityIndex, newRow, newCol);
+    //         handleUnknownEntityType(entityIndex);
+    //         return;
+    //     }
+    // }
 
-    handleUnknownEntityType(entityIndex);
+    // handleUnknownEntityType(entityIndex);
 }
 
 void handleArrowRight(int entityIndex)
 {
-    auto& state = g_gameState;
+    // auto& state = g_gameState;
 
-    if (tryMoveSmartEntity(entityIndex) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (tryMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (canEntityMove(entityIndex) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (canEntityMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    int row = state.entities[entityIndex].row;
-    int col = state.entities[entityIndex].col;
+    // int row = state.entities[entityIndex].row;
+    // int col = state.entities[entityIndex].col;
 
-    int belowIndex = state.bottomEntityMap[row][col];
+    // EntityType belowIndex = state.bottomEntityMap[row][col];
 
-    if (belowIndex == CELL_FLAG_EMPTY)
-    {
-        moveAndRedrawEntity(entityIndex, row + 1, col);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
-    if (replaceEntityIfTargetMatches(entityIndex, row + 1, col) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (belowIndex == EntityType::EMPTY_CELL)
+    // {
+    //     moveAndRedrawEntity(entityIndex, row + 1, col);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
+    // if (replaceEntityIfTargetMatches(entityIndex, row + 1, col) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (belowIndex < 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (belowIndex < EntityType::EMPTY_CELL)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    EntityType targetState = g_spawners[belowIndex].type;
+    // EntityType targetState = g_gameState.entities[belowIndex].entityType;
 
-    if (targetState == EntityType::DeflectorLeft)
-    {
-        state.entities[entityIndex].entityType = 2;
-        moveAndRedrawEntity(entityIndex, row, col);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (targetState == EntityType::DEFLECTOR_LEFT)
+    // {
+    //     state.entities[entityIndex].entityType = EntityType::ARROW_DOWN;
+    //     moveAndRedrawEntity(entityIndex, row, col);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (targetState == EntityType::DeflectorRight)
-    {
-        state.entities[entityIndex].entityType = 1;
-        moveAndRedrawEntity(entityIndex, row, col);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (targetState == EntityType::DEFLECTOR_RIGHT)
+    // {
+    //     state.entities[entityIndex].entityType = EntityType::ARROW_UP;
+    //     moveAndRedrawEntity(entityIndex, row, col);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    handleUnknownEntityType(entityIndex);
+    // handleUnknownEntityType(entityIndex);
 }
 
 void handleUnknownEntityType(int entityIndex) {}
@@ -3133,12 +3129,12 @@ void handlePusherLeft(int entityIndex)
         handleUnknownEntityType(entityIndex);
         return;
     }
-    if (tryMoveSmartEntity(entityIndex) != 0)
+    if (tryMoveMagnet(entityIndex) != 0)
     {
         handleUnknownEntityType(entityIndex);
         return;
     }
-    if (canEntityMove(entityIndex) != 0)
+    if (canEntityMoveMagnet(entityIndex) != 0)
     {
         handleUnknownEntityType(entityIndex);
         return;
@@ -3158,7 +3154,7 @@ void handlePusherLeft(int entityIndex)
         handleUnknownEntityType(entityIndex);
         return;
     }
-    state.entities[entityIndex].entityType = 0x0A;
+    state.entities[entityIndex].entityType = EntityType::PUSHER_RIGHT;
 
     moveAndRedrawEntity(entityIndex, newRow, newCol);
     topIndex = state.topEntityMap[newRow][newCol];
@@ -3177,9 +3173,9 @@ void handlePusherLeft(int entityIndex)
 
     if (auxIndex != -1)
     {
-        int auxAction = state.entities[auxIndex].entityType;
+        EntityType auxAction = state.entities[auxIndex].entityType;
 
-        if (auxAction != (int)EntityType::Lava)
+        if (auxAction != EntityType::Lava)
         {
             handleUnknownEntityType(entityIndex);
             return;
@@ -3208,83 +3204,83 @@ static bool legacyRandomBit()
 
 void handlePusherUp(int entityIndex)
 {
-    auto& state = g_gameState;
+    // auto& state = g_gameState;
 
-    if ((frameCounter % 5) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if ((frameCounter % 5) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (tryMoveSmartEntity(entityIndex) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (tryMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (canEntityMove(entityIndex) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (canEntityMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    int newRow = state.entities[entityIndex].row;
-    int newCol = state.entities[entityIndex].col;
+    // int newRow = state.entities[entityIndex].row;
+    // int newCol = state.entities[entityIndex].col;
 
-    int leftIndex = state.leftEntityMap[newRow][newCol];
+    // EntityType leftIndex = state.leftEntityMap[newRow][newCol];
 
-    if (leftIndex == -1)
-    {
-        moveAndRedrawEntity(entityIndex, newRow, newCol - 1);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (leftIndex == EntityType::EMPTY)
+    // {
+    //     moveAndRedrawEntity(entityIndex, newRow, newCol - 1);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (replaceEntityIfTargetMatches(entityIndex, newRow, newCol - 1) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (replaceEntityIfTargetMatches(entityIndex, newRow, newCol - 1) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    state.entities[entityIndex].entityType = 8;
+    // state.entities[entityIndex].entityType = EntityType::PUSHER_DOWN;
 
-    moveAndRedrawEntity(entityIndex, newRow, newCol);
+    // moveAndRedrawEntity(entityIndex, newRow, newCol);
 
-    leftIndex = state.leftEntityMap[newRow][newCol];
+    // leftIndex = state.leftEntityMap[newRow][newCol];
 
-    if (leftIndex < 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (leftIndex < EntityType::EMPTY_CELL)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    auto& target = state.entities[leftIndex];
+    // auto& target = state.entities[leftIndex];
 
-    int targetRow = target.row;
-    int targetCol = target.col - 1;
+    // int targetRow = target.row;
+    // int targetCol = target.col - 1;
 
-    int auxIndex = state.rightEntityMap[targetRow][targetCol];
+    // EntityType auxIndex = state.rightEntityMap[targetRow][targetCol];
 
-    if (auxIndex != -1)
-    {
-        int auxAction = state.entities[auxIndex].entityType;
+    // if (auxIndex != EntityType::EMPTY)
+    // {
+    //     EntityType auxAction = state.entities[auxIndex].entityType;
 
-        if (auxAction != (int)EntityType::Lava)
-        {
-            handleUnknownEntityType(entityIndex);
-            return;
-        }
-    }
+    //     if (auxAction != EntityType::Lava)
+    //     {
+    //         handleUnknownEntityType(entityIndex);
+    //         return;
+    //     }
+    // }
 
-    if (replaceEntityIfTargetMatches(leftIndex, targetRow, targetCol) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (replaceEntityIfTargetMatches(leftIndex, targetRow, targetCol) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    moveAndRedrawEntity(leftIndex, targetRow, targetCol);
+    // moveAndRedrawEntity(leftIndex, targetRow, targetCol);
 
-    handleUnknownEntityType(entityIndex);
+    // handleUnknownEntityType(entityIndex);
 }
 
 
@@ -3298,13 +3294,13 @@ void handlePusherDown(int entityIndex)
         return;
     }
 
-    if (tryMoveSmartEntity(entityIndex) != 0)
+    if (tryMoveMagnet(entityIndex) != 0)
     {
         handleUnknownEntityType(entityIndex);
         return;
     }
 
-    if (canEntityMove(entityIndex) != 0)
+    if (canEntityMoveMagnet(entityIndex) != 0)
     {
         handleUnknownEntityType(entityIndex);
         return;
@@ -3328,7 +3324,7 @@ void handlePusherDown(int entityIndex)
         return;
     }
 
-    state.entities[entityIndex].entityType = 7;
+    state.entities[entityIndex].entityType = EntityType::PUSHER_UP;
 
     moveAndRedrawEntity(entityIndex, newRow, newCol);
 
@@ -3349,9 +3345,9 @@ void handlePusherDown(int entityIndex)
 
     if (auxIndex != -1)
     {
-        int auxAction = state.entities[auxIndex].entityType;
+        EntityType auxAction = state.entities[auxIndex].entityType;
 
-        if (auxAction != (int)EntityType::Lava)
+        if (auxAction != EntityType::Lava)
         {
             handleUnknownEntityType(entityIndex);
             return;
@@ -3379,13 +3375,13 @@ void handlePusherRight(int entityIndex)
         return;
     }
 
-    if (tryMoveSmartEntity(entityIndex) != 0)
+    if (tryMoveMagnet(entityIndex) != 0)
     {
         handleUnknownEntityType(entityIndex);
         return;
     }
 
-    if (canEntityMove(entityIndex) != 0)
+    if (canEntityMoveMagnet(entityIndex) != 0)
     {
         handleUnknownEntityType(entityIndex);
         return;
@@ -3409,7 +3405,7 @@ void handlePusherRight(int entityIndex)
         return;
     }
 
-    state.entities[entityIndex].entityType = 9;
+    state.entities[entityIndex].entityType = EntityType::PUSHER_LEFT;
 
     moveAndRedrawEntity(entityIndex, newRow, newCol);
 
@@ -3430,9 +3426,9 @@ void handlePusherRight(int entityIndex)
 
     if (auxIndex != -1)
     {
-        int auxAction = state.entities[auxIndex].entityType;
+        EntityType auxAction = state.entities[auxIndex].entityType;
 
-        if (auxAction != (int)EntityType::Lava)
+        if (auxAction != EntityType::Lava)
         {
             handleUnknownEntityType(entityIndex);
             return;
@@ -3452,497 +3448,494 @@ void handlePusherRight(int entityIndex)
 
 void handleCurvedArrowUp(int entityIndex)
 {
-    if (tryMoveSmartEntity(entityIndex) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (tryMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (canEntityMove(entityIndex) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (canEntityMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    const int newRow = pendingRow;
-    const int newCol = pendingCol;
+    // const int newRow = pendingRow;
+    // const int newCol = pendingCol;
 
-    const int leftIndex  = g_gameState.rightEntityMap[newRow][newCol];
-    const int downIndex  = g_gameState.bottomEntityMap[newRow][newCol];
-    const int upIndex    = g_gameState.topEntityMap[newRow][newCol];
-    const int diagIndex  = g_gameState.auxTopRightEntityMap[newRow][newCol];
+    // const int leftIndex  = g_gameState.rightEntityMap[newRow][newCol];
+    // const int downIndex  = g_gameState.bottomEntityMap[newRow][newCol];
+    // const int upIndex    = g_gameState.topEntityMap[newRow][newCol];
+    // const int diagIndex  = g_gameState.auxTopRightEntityMap[newRow][newCol];
 
-    if (leftIndex == CELL_FLAG_EMPTY)
-    {
-        moveAndRedrawEntity(entityIndex, newRow, newCol - 1);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (leftIndex == EntityType::EMPTY_CELL)
+    // {
+    //     moveAndRedrawEntity(entityIndex, newRow, newCol - 1);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (replaceEntityIfTargetMatches(entityIndex, newRow, newCol - 1) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (replaceEntityIfTargetMatches(entityIndex, newRow, newCol - 1) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    bool allowDown =
-        (downIndex == CELL_FLAG_EMPTY &&
-         upIndex == CELL_FLAG_EMPTY);
+    // bool allowDown =
+    //     (downIndex == CELL_FLAG_EMPTY &&
+    //      upIndex == CELL_FLAG_EMPTY);
 
-    bool allowUp =
-        (downIndex == CELL_FLAG_EMPTY &&
-         diagIndex == CELL_FLAG_EMPTY);
+    // bool allowUp =
+    //     (downIndex == CELL_FLAG_EMPTY &&
+    //      diagIndex == CELL_FLAG_EMPTY);
 
-    if (allowDown && allowUp)
-    {
-        const bool goDown = legacyRandomBit();
+    // if (allowDown && allowUp)
+    // {
+    //     const bool goDown = legacyRandomBit();
 
-        const int targetRow = goDown
-            ? (newRow + 1)
-            : (newRow - 1);
+    //     const int targetRow = goDown
+    //         ? (newRow + 1)
+    //         : (newRow - 1);
 
-        moveAndRedrawEntity(entityIndex, targetRow, newCol - 1);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    //     moveAndRedrawEntity(entityIndex, targetRow, newCol - 1);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (allowDown)
-    {
-        moveAndRedrawEntity(entityIndex, newRow + 1, newCol - 1);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (allowDown)
+    // {
+    //     moveAndRedrawEntity(entityIndex, newRow + 1, newCol - 1);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (allowUp)
-    {
-        moveAndRedrawEntity(entityIndex, newRow - 1, newCol - 1);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (allowUp)
+    // {
+    //     moveAndRedrawEntity(entityIndex, newRow - 1, newCol - 1);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (leftIndex >= 0 &&
-        g_spawners[leftIndex].type == EntityType::DeflectorRight)
-    {
-        g_spawners[entityIndex].type = EntityType::CurvedArrowRight;
+    // if (leftIndex >= 0 &&
+    //     g_gameState.entities[leftIndex].entityType == EntityType::DEFLECTOR_RIGHT)
+    // {
+    //     g_gameState.entities[entityIndex].entityType = EntityType::CURVED_ARROW_RIGHT;
 
-        moveAndRedrawEntity(entityIndex, newRow, newCol);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    //     moveAndRedrawEntity(entityIndex, newRow, newCol);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (leftIndex >= 0 &&
-        g_spawners[leftIndex].type == EntityType::DeflectorLeft)
-    {
-        g_spawners[entityIndex].type = EntityType::CurvedArrowLeft;
+    // if (leftIndex >= 0 &&
+    //     g_gameState.entities[leftIndex].entityType == EntityType::DEFLECTOR_LEFT)
+    // {
+    //     g_gameState.entities[entityIndex].entityType = EntityType::CURVED_ARROW_LEFT;
 
-        moveAndRedrawEntity(entityIndex, newRow, newCol);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    //     moveAndRedrawEntity(entityIndex, newRow, newCol);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    handleUnknownEntityType(entityIndex);
+    // handleUnknownEntityType(entityIndex);
 }
 
 void handleCurvedArrowDown(int entityIndex)
 {
-    if (tryMoveSmartEntity(entityIndex) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (tryMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (canEntityMove(entityIndex) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (canEntityMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    const int newRow = pendingRow;
-    const int newCol = pendingCol;
+    // const int newRow = pendingRow;
+    // const int newCol = pendingCol;
 
-    const int rightIndex = g_gameState.leftEntityMap[newRow][newCol];
+    // const int rightIndex = g_gameState.leftEntityMap[newRow][newCol];
 
-    if (rightIndex == CELL_FLAG_EMPTY)
-    {
-        moveAndRedrawEntity(entityIndex, newRow, newCol + 1);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (rightIndex == 0x0000)
+    // {
+    //     moveAndRedrawEntity(entityIndex, newRow, newCol + 1);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (replaceEntityIfTargetMatches(entityIndex, newRow, newCol + 1) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (replaceEntityIfTargetMatches(entityIndex, newRow, newCol + 1) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    const int upIndex    = g_gameState.topEntityMap[newRow][newCol];
-    const int downIndex  = g_gameState.bottomEntityMap[newRow][newCol];
-    const int diagUp     = g_gameState.auxTopRightEntityMap[newRow][newCol];
-    const int diagDown   = g_gameState.auxBottomRightEntityMap[newRow][newCol];
+    // const int upIndex    = g_gameState.topEntityMap[newRow][newCol];
+    // const int downIndex  = g_gameState.bottomEntityMap[newRow][newCol];
+    // const int diagUp     = g_gameState.auxTopRightEntityMap[newRow][newCol];
+    // const int diagDown   = g_gameState.auxBottomRightEntityMap[newRow][newCol];
 
-    const bool allowUp =
-        (upIndex == CELL_FLAG_EMPTY && diagUp == CELL_FLAG_EMPTY);
+    // const bool allowUp =
+    //     (upIndex == 0x0000 && diagUp == CELL_FLAG_EMPTY);
 
-    const bool allowDown =
-        (downIndex == CELL_FLAG_EMPTY && diagDown == CELL_FLAG_EMPTY);
+    // const bool allowDown =
+    //     (downIndex == CELL_FLAG_EMPTY && diagDown == CELL_FLAG_EMPTY);
 
-    if (allowUp && allowDown)
-    {
-        const bool goDown = legacyRandomBit();
-        const int targetRow = goDown ? (newRow + 1)
-                                     : (newRow - 1);
+    // if (allowUp && allowDown)
+    // {
+    //     const bool goDown = legacyRandomBit();
+    //     const int targetRow = goDown ? (newRow + 1)
+    //                                  : (newRow - 1);
 
-        moveAndRedrawEntity(entityIndex, targetRow, newCol + 1);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    //     moveAndRedrawEntity(entityIndex, targetRow, newCol + 1);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (allowUp)
-    {
-        moveAndRedrawEntity(entityIndex, newRow - 1, newCol + 1);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (allowUp)
+    // {
+    //     moveAndRedrawEntity(entityIndex, newRow - 1, newCol + 1);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (allowDown)
-    {
-        moveAndRedrawEntity(entityIndex, newRow + 1, newCol + 1);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (allowDown)
+    // {
+    //     moveAndRedrawEntity(entityIndex, newRow + 1, newCol + 1);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (rightIndex >= 0 &&
-        g_spawners[rightIndex].type == EntityType::DeflectorRight)
-    {
-        g_spawners[entityIndex].type = EntityType::CurvedArrowLeft;
+    // if (rightIndex >= 0 &&
+    //     g_gameState.entities[rightIndex].entityType == EntityType::DEFLECTOR_RIGHT)
+    // {
+    //     g_gameState.entities[entityIndex].entityType = EntityType::CURVED_ARROW_LEFT;
 
-        moveAndRedrawEntity(entityIndex, newRow, newCol);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    //     moveAndRedrawEntity(entityIndex, newRow, newCol);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (rightIndex >= 0 &&
-        g_spawners[rightIndex].type == EntityType::DeflectorLeft)
-    {
-        g_spawners[entityIndex].type = EntityType::CurvedArrowRight;
+    // if (rightIndex >= 0 &&
+    //     g_gameState.entities[rightIndex].entityType == EntityType::DEFLECTOR_LEFT)
+    // {
+    //     g_gameState.entities[entityIndex].entityType = EntityType::CURVED_ARROW_RIGHT;
 
-        moveAndRedrawEntity(entityIndex, newRow, newCol);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    //     moveAndRedrawEntity(entityIndex, newRow, newCol);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    handleUnknownEntityType(entityIndex);
+    // handleUnknownEntityType(entityIndex);
 }
 
 void handleCurvedArrowLeft(int entityIndex)
 {
-    if (tryMoveSmartEntity(entityIndex) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (tryMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (canEntityMove(entityIndex) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (canEntityMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    const int newRow = pendingRow;
-    const int newCol = pendingCol;
+    // const int newRow = pendingRow;
+    // const int newCol = pendingCol;
 
-    const int upIndex = g_gameState.auxTopRightEntityMap[newRow][newCol];
+    // const int upIndex = g_gameState.auxTopRightEntityMap[newRow][newCol];
 
-    if (upIndex == CELL_FLAG_EMPTY)
-    {
-        moveAndRedrawEntity(entityIndex, newRow - 1, newCol);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (upIndex == 0x0000)
+    // {
+    //     moveAndRedrawEntity(entityIndex, newRow - 1, newCol);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (replaceEntityIfTargetMatches(entityIndex, newRow - 1, newCol) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (replaceEntityIfTargetMatches(entityIndex, newRow - 1, newCol) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    const int leftIndex  = g_gameState.rightEntityMap[newRow][newCol];
-    const int rightIndex = g_gameState.leftEntityMap[newRow][newCol];
-    const int diagLeft   = g_gameState.auxMap127A[newRow][newCol];
-    const int diagRight  = g_gameState.auxMap1282[newRow][newCol];
+    // const int leftIndex  = g_gameState.rightEntityMap[newRow][newCol];
+    // const int rightIndex = g_gameState.leftEntityMap[newRow][newCol];
+    // const int diagLeft   = g_gameState.auxMap127A[newRow][newCol];
+    // const int diagRight  = g_gameState.auxMap1282[newRow][newCol];
 
-    const bool allowLeft  = (leftIndex  == CELL_FLAG_EMPTY && diagLeft  == CELL_FLAG_EMPTY);
-    const bool allowRight = (rightIndex == CELL_FLAG_EMPTY && diagRight == CELL_FLAG_EMPTY);
+    // const bool allowLeft  = (leftIndex  == CELL_FLAG_EMPTY && diagLeft  == CELL_FLAG_EMPTY);
+    // const bool allowRight = (rightIndex == CELL_FLAG_EMPTY && diagRight == CELL_FLAG_EMPTY);
 
-    if (allowLeft && allowRight)
-    {
-        const bool goRight = legacyRandomBit();
-        const int targetCol = goRight ? (newCol + 1)
-                                      : (newCol - 1);
+    // if (allowLeft && allowRight)
+    // {
+    //     const bool goRight = legacyRandomBit();
+    //     const int targetCol = goRight ? (newCol + 1)
+    //                                   : (newCol - 1);
 
-        moveAndRedrawEntity(entityIndex, newRow - 1, targetCol);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    //     moveAndRedrawEntity(entityIndex, newRow - 1, targetCol);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (allowLeft)
-    {
-        moveAndRedrawEntity(entityIndex, newRow - 1, newCol - 1);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (allowLeft)
+    // {
+    //     moveAndRedrawEntity(entityIndex, newRow - 1, newCol - 1);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (allowRight)
-    {
-        moveAndRedrawEntity(entityIndex, newRow - 1, newCol + 1);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (allowRight)
+    // {
+    //     moveAndRedrawEntity(entityIndex, newRow - 1, newCol + 1);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (upIndex >= 0 &&
-        g_spawners[upIndex].type == EntityType::DeflectorRight)
-    {
-        g_spawners[entityIndex].type = EntityType::CurvedArrowUp;
+    // if (upIndex >= 0 &&
+    //     g_gameState.entities[upIndex].entityType == EntityType::DEFLECTOR_RIGHT)
+    // {
+    //     g_gameState.entities[entityIndex].entityType = EntityType::CURVED_ARROW_UP;
 
-        moveAndRedrawEntity(entityIndex, newRow, newCol);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    //     moveAndRedrawEntity(entityIndex, newRow, newCol);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (upIndex >= 0 &&
-        g_spawners[upIndex].type == EntityType::DeflectorLeft)
-    {
-        g_spawners[entityIndex].type = EntityType::CurvedArrowDown;
+    // if (upIndex >= 0 &&
+    //     g_gameState.entities[upIndex].entityType == EntityType::DEFLECTOR_LEFT)
+    // {
+    //     g_gameState.entities[entityIndex].entityType = EntityType::CURVED_ARROW_DOWN;
 
-        moveAndRedrawEntity(entityIndex, newRow, newCol);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    //     moveAndRedrawEntity(entityIndex, newRow, newCol);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    handleUnknownEntityType(entityIndex);
+    // handleUnknownEntityType(entityIndex);
 }
 
 void handleCurvedArrowRight(int entityIndex)
 {
-    if (tryMoveSmartEntity(entityIndex) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (tryMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (canEntityMove(entityIndex) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (canEntityMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    const int newRow = pendingRow;
-    const int newCol = pendingCol;
+    // const int newRow = pendingRow;
+    // const int newCol = pendingCol;
 
-    const int belowIndex =
-        g_gameState.bottomEntityMap[newRow][newCol];
+    // const int belowIndex =
+    //     g_gameState.bottomEntityMap[newRow][newCol];
 
-    if (belowIndex == CELL_FLAG_EMPTY)
-    {
-        moveAndRedrawEntity(entityIndex, newRow + 1, newCol);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (belowIndex == 0x0000)
+    // {
+    //     moveAndRedrawEntity(entityIndex, newRow + 1, newCol);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (replaceEntityIfTargetMatches(entityIndex, newRow + 1, newCol) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (replaceEntityIfTargetMatches(entityIndex, newRow + 1, newCol) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    const int leftIndex =
-        g_gameState.leftEntityMap[newRow][newCol];
+    // const int leftIndex =
+    //     g_gameState.leftEntityMap[newRow][newCol];
 
-    const int rightIndex =
-        g_gameState.rightEntityMap[newRow][newCol];
+    // const int rightIndex =
+    //     g_gameState.rightEntityMap[newRow][newCol];
 
-    const int diagLeft =
-        g_gameState.auxTopRightEntityMap[newRow][newCol];
+    // const int diagLeft =
+    //     g_gameState.auxTopRightEntityMap[newRow][newCol];
 
-    const int diagRight =
-        g_gameState.auxBottomRightEntityMap[newRow][newCol];
+    // const int diagRight =
+    //     g_gameState.auxBottomRightEntityMap[newRow][newCol];
 
-    const bool condRange =
-        (belowIndex >= 0 &&
-         g_spawners[belowIndex].type >= EntityType::CurvedArrowUp &&
-         g_spawners[belowIndex].type <= EntityType::CurvedArrowRight);
+    // const bool condRange =
+    //     (belowIndex >= 0 &&
+    //      g_gameState.entities[belowIndex].entityType >= EntityType::CURVED_ARROW_UP &&
+    //      g_gameState.entities[belowIndex].entityType <= EntityType::CURVED_ARROW_RIGHT);
 
-    const bool condExact =
-        (belowIndex >= 0 &&
-         g_spawners[belowIndex].type ==
-         EntityType::RoundedPushableBrick);
+    // const bool condExact =
+    //     (belowIndex >= 0 &&
+    //      g_gameState.entities[belowIndex].entityType ==
+    //      EntityType::RoundedPushableBrick);
 
-    bool allowDiagRight = false;
+    // bool allowDiagRight = false;
 
-    if (rightIndex == CELL_FLAG_EMPTY &&
-        diagLeft  == CELL_FLAG_EMPTY)
-    {
-        if (belowIndex == static_cast<int>(EntityType::Wall7) ||
-            belowIndex == static_cast<int>(EntityType::Wall4) ||
-            belowIndex == static_cast<int>(EntityType::Wall8) ||
-            condRange ||
-            condExact)
-        {
-            allowDiagRight = true;
-        }
-    }
+    // if (rightIndex == CELL_FLAG_EMPTY &&
+    //     diagLeft  == CELL_FLAG_EMPTY)
+    // {
+    //     if (belowIndex == static_cast<int>(EntityType::TOP_LEFT_ROUNDED_WALL) ||
+    //         belowIndex == static_cast<int>(EntityType::LEFT_ROUNDED_WALL) ||
+    //         belowIndex == static_cast<int>(EntityType::TOP_ROUNDED_WALL) ||
+    //         condRange ||
+    //         condExact)
+    //     {
+    //         allowDiagRight = true;
+    //     }
+    // }
 
-    bool allowDiagLeft = false;
+    // bool allowDiagLeft = false;
 
-    if (leftIndex == CELL_FLAG_EMPTY &&
-        diagRight == CELL_FLAG_EMPTY)
-    {
-        if (belowIndex == static_cast<int>(EntityType::Wall1) ||
-            belowIndex == static_cast<int>(EntityType::Wall4) ||
-            belowIndex == static_cast<int>(EntityType::Wall2) ||
-            condRange ||
-            condExact)
-        {
-            allowDiagLeft = true;
-        }
-    }
+    // if (leftIndex == CELL_FLAG_EMPTY &&
+    //     diagRight == CELL_FLAG_EMPTY)
+    // {
+    //     if (belowIndex == static_cast<int>(EntityType::BOTTOM_LEFT_ROUND_WALL) ||
+    //         belowIndex == static_cast<int>(EntityType::LEFT_ROUNDED_WALL) ||
+    //         belowIndex == static_cast<int>(EntityType::BOTTOM_ROUNDED_WALL) ||
+    //         condRange ||
+    //         condExact)
+    //     {
+    //         allowDiagLeft = true;
+    //     }
+    // }
 
-    if (allowDiagRight && allowDiagLeft)
-    {
-        const bool goLeft = legacyRandomBit();
-        const int targetCol =
-            goLeft ? (newCol - 1)
-                   : (newCol + 1);
+    // if (allowDiagRight && allowDiagLeft)
+    // {
+    //     const bool goLeft = legacyRandomBit();
+    //     const int targetCol =
+    //         goLeft ? (newCol - 1)
+    //                : (newCol + 1);
 
-        moveAndRedrawEntity(entityIndex,
-                            newRow + 1,
-                            targetCol);
+    //     moveAndRedrawEntity(entityIndex,
+    //                         newRow + 1,
+    //                         targetCol);
 
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (allowDiagRight)
-    {
-        moveAndRedrawEntity(entityIndex,
-                            newRow + 1,
-                            newCol + 1);
+    // if (allowDiagRight)
+    // {
+    //     moveAndRedrawEntity(entityIndex,
+    //                         newRow + 1,
+    //                         newCol + 1);
 
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (allowDiagLeft)
-    {
-        moveAndRedrawEntity(entityIndex,
-                            newRow + 1,
-                            newCol - 1);
+    // if (allowDiagLeft)
+    // {
+    //     moveAndRedrawEntity(entityIndex,
+    //                         newRow + 1,
+    //                         newCol - 1);
 
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (belowIndex >= 0 &&
-        g_spawners[belowIndex].type ==
-        EntityType::DeflectorLeft)
-    {
-        g_spawners[entityIndex].type =
-            EntityType::CurvedArrowDown;
+    // if (belowIndex >= 0 &&
+    //     g_gameState.entities[belowIndex].entityType ==
+    //     EntityType::DEFLECTOR_LEFT)
+    // {
+    //     g_gameState.entities[entityIndex].entityType =
+    //         EntityType::CURVED_ARROW_DOWN;
 
-        moveAndRedrawEntity(entityIndex,
-                            newRow,
-                            newCol);
+    //     moveAndRedrawEntity(entityIndex,
+    //                         newRow,
+    //                         newCol);
 
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (belowIndex >= 0 &&
-        g_spawners[belowIndex].type ==
-        EntityType::DeflectorRight)
-    {
-        g_spawners[entityIndex].type =
-            EntityType::CurvedArrowUp;
+    // if (belowIndex >= 0 &&
+    //     g_gameState.entities[belowIndex].entityType ==
+    //     EntityType::DEFLECTOR_RIGHT)
+    // {
+    //     g_gameState.entities[entityIndex].entityType =
+    //         EntityType::CURVED_ARROW_UP;
 
-        moveAndRedrawEntity(entityIndex,
-                            newRow,
-                            newCol);
+    //     moveAndRedrawEntity(entityIndex,
+    //                         newRow,
+    //                         newCol);
 
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    handleUnknownEntityType(entityIndex);
+    // handleUnknownEntityType(entityIndex);
 }
 
 void handleMonsterEntityType(int entityIndex)
 {
-    if (checkAndHandleDeathCondition(entityIndex) != 0)
-        return;
+    // if (checkAndHandleDeathCondition(entityIndex) != 0)
+    //     return;
 
-    if ((frameCounter % 3) != 0)
-        return;
+    // if ((frameCounter % 3) != 0)
+    //     return;
 
-    int rowOffset = 0;
-    int colOffset = 0;
+    // int rowOffset = 0;
+    // int colOffset = 0;
 
-    // 3️⃣ tryMoveSmartEntity
-    if (tryMoveSmartEntity(entityIndex) != 0)
-        return;
+    // if (tryMoveMagnet(entityIndex) != 0)
+    //     return;
 
-    // 4️⃣ can move ?
-    if (canEntityMove(entityIndex) == 0)
-    {
-        // --- random branch 1 ---
-        pseudoRandomUpdate(0x00008000u);
-        if ((randomSeedLow & 1u) != 0u)
-        {
-            adjustSmartEntityTarget(
-                entityIndex,
-                srcRow,
-                srcCol,
-                &pendingRow,
-                &pendingCol
-            );
-        }
-        else
-        {
-            // --- random branch 2 ---
-            pseudoRandomUpdate(0x00008000u);
+    // if (canEntityMoveMagnet(entityIndex) == 0)
+    // {
+    //     pseudoRandomUpdate(0x00008000u);
+    //     if ((randomSeedLow & 1u) != 0u)
+    //     {
+    //         adjustSmartEntityTarget(
+    //             entityIndex,
+    //             srcRow,
+    //             srcCol,
+    //             &pendingRow,
+    //             &pendingCol
+    //         );
+    //     }
+    //     else
+    //     {
+    //         // --- random branch 2 ---
+    //         pseudoRandomUpdate(0x00008000u);
 
-            bool axisRow = (randomSeedLow & 1u) != 0u;
+    //         bool axisRow = (randomSeedLow & 1u) != 0u;
 
-            pseudoRandomUpdate(0x00008000u);
+    //         pseudoRandomUpdate(0x00008000u);
 
-            int offset = (randomSeedLow % 3) - 1; // -1,0,+1
+    //         int offset = (randomSeedLow % 3) - 1; // -1,0,+1
 
-            if (axisRow)
-                rowOffset = offset;
-            else
-                colOffset = offset;
-        }
-    }
+    //         if (axisRow)
+    //             rowOffset = offset;
+    //         else
+    //             colOffset = offset;
+    //     }
+    // }
 
-    int newRow = pendingRow + rowOffset;
-    int newCol = pendingCol + colOffset;
+    // int newRow = pendingRow + rowOffset;
+    // int newCol = pendingCol + colOffset;
 
-    int cell = g_gameState.entityMap[newRow][newCol];
+    // EntityType cell = g_gameState.tileMap[newRow][newCol];
 
-    bool cellFree =
-        (cell == CELL_FLAG_EMPTY) ||
-        (cell >= 0 &&
-         g_spawners[cell].type == EntityType::Lava);
+    // bool cellFree =
+    //     (cell == EntityType::EMPTY_CELL) ||
+    //     (cell >= EntityType::EMPTY_CELL &&
+    //      g_gameState.entities[cell].entityType == EntityType::Lava);
 
-    if (cellFree)
-    {
-        pendingRow = newRow;
-        pendingCol = newCol;
-    }
+    // if (cellFree)
+    // {
+    //     pendingRow = newRow;
+    //     pendingCol = newCol;
+    // }
 
-    if (replaceEntityIfTargetMatches(entityIndex, pendingRow, pendingCol))
-        return;
+    // if (replaceEntityIfTargetMatches(entityIndex, pendingRow, pendingCol))
+    //     return;
 
-    moveAndRedrawEntity(entityIndex, pendingRow, pendingCol);
+    // moveAndRedrawEntity(entityIndex, pendingRow, pendingCol);
 }
 
 static constexpr std::array<EntityHandler, 56> ENTITY_HANDLERS = {{

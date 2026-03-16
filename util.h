@@ -58,5 +58,6 @@ inline bool isDigit(char c);
 uint16_t generateChangeSpeed();
 bool isInsideGrid(int row, int col);
 std::uint32_t getCellId(int row, int col);
+uint16_t divide64_unsigned(uint64_t value);
 
 #endif // UTIL_H

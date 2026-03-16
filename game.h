@@ -36,13 +36,6 @@ extern GameInteractionMode g_interactionMode;
 using CallbackFn = void (*)();
 struct CallbackQueueEntry;
 
-struct EntityActionStruct {
-    uint16_t entityType;
-    uint16_t row;
-    uint16_t col;
-    uint16_t timer;
-};
-
 #pragma pack(push, 1)
 struct CallbackQueueEntry {
     uint8_t state;
@@ -60,11 +53,97 @@ static constexpr int GRID_COLS = 30;
 static constexpr int MAX_CHANGES = GRID_ROWS * GRID_COLS;
 static constexpr int kMaxEntityLines = 256;
 
-static constexpr std::int16_t CELL_FLAG_EMPTY    = static_cast<std::int16_t>(0xFFFF);
-static constexpr std::int16_t CELL_FLAG_SENTINEL = static_cast<std::int16_t>(0xFFFE);
+// static constexpr std::int16_t CELL_FLAG_EMPTY    = static_cast<std::int16_t>(0xFFFF);
+// static constexpr std::int16_t CELL_FLAG_SENTINEL = static_cast<std::int16_t>(0xFFFE);
 
 extern std::int16_t srcRow;
 extern std::int16_t srcCol;
+
+
+enum class EntityType : std::uint16_t
+{
+    // --- Empty / Player
+    EMPTY = 00000,
+    // --- Empty / Player
+    EMPTY_CELL = 0xFFFF,
+
+    // --- Walls
+    BOTTOM_LEFT_ROUND_WALL = 0xFFFD,
+    BOTTOM_ROUNDED_WALL = 0xFFFC,
+    BOTTOM_RIGHT_ROUND_WALL = 0xFFFB,
+    LEFT_ROUNDED_WALL = 0xFFFA,
+    SQUARE_WALL = 0xFFF9,
+    RIGHT_ROUNDED_WALL = 0xFFF8,
+    TOP_LEFT_ROUNDED_WALL = 0xFFF7,
+    TOP_ROUNDED_WALL = 0xFFF6,
+    TOP_RIGHT_ROUNDED_WALL = 0xFFF5,
+
+    BREAKABLE_BRICK = 0xFFF4,
+    DIAMOND = 0xFFF3,
+    ONE_WAY_LEFT_TO_RIGHT_PORTAL = 0xFFF2,
+    ONE_WAY_RIGHT_TO_LEFT_PORTAL = 0xFFF1,
+    ONE_WAY_TOP_TO_BOTTOM = 0xFFF0,
+    ONE_WAY_BOTTOM_TO_TOP = 0xFFEF,
+
+    // --- Mobiles
+    PushableBrick = 0x0000,
+    ARROW_UP = 0x0001,
+    ARROW_DOWN = 0x0002,
+    ArrowLeft = 0x0003,
+    ArrowRight = 0x0004,
+
+    MagnetVertical = 0x0005,
+    MagnetHorizontal = 0x0006,
+
+    PUSHER_UP = 0x0007,
+    PUSHER_DOWN = 0x0008,
+    PUSHER_LEFT = 0x0009,
+    PUSHER_RIGHT = 0x000A,
+
+    CURVED_ARROW_UP = 0x000B,
+    CURVED_ARROW_DOWN = 0x000C,
+    CURVED_ARROW_LEFT = 0x000D,
+    CURVED_ARROW_RIGHT = 0x000E,
+
+    EnemyPropeller = 0x000F,
+    EnemyJaw = 0x0010,
+    EnemyPurple = 0x0011,
+    EnemySnake = 0x0012,
+    EnemyPropellerRound = 0x0013,
+
+    DEFLECTOR_LEFT = 0x0014,
+    DEFLECTOR_RIGHT = 0x0015,
+    RoundedPushableBrick = 0x0016,
+
+    UnknownA1 = 0x0017,
+    UnknownA2 = 0x0018,
+    UnknownA3 = 0x0019,
+    UnknownA4 = 0x001A,
+
+    DISPENSER1 = 0x001B,
+    DISPENSER2 = 0x001C,
+    DISPENSER3 = 0x001D,
+    DISPENSER4 = 0x001E,
+
+    Lava = 0x001F,
+    Lava2 = 0x0020,
+
+    COUNTDOWN = 0x003B,
+    UnknownX = 0x003A,
+    UnknownY = 0x0039,
+    UnknownZ = 0x0038,
+    UnknownLeftBrace = 0x0037,
+    UnknownPipe = 0x0036,
+    UNKNOWN = 0x0032,
+    KYE_LOCATION = 0xFFFE, 
+};
+
+struct EntityInfo {
+    EntityType entityType;// [172Eh]
+    uint16_t row;       // [1730h]
+    uint16_t col;       // [1732h]
+    uint16_t animFrame;     // [1734h]
+};
 
 // =====================
 // GameState
@@ -73,20 +152,18 @@ class GameState {
 public:
     static constexpr int MAX_NUM_ENTITIES = 256;
 
-    std::vector<EntityActionStruct> entities;
+    std::array<EntityInfo,256> entities; // 172E
 
-    int entityMap[GRID_ROWS][GRID_COLS];
-    int rightEntityMap[GRID_ROWS][GRID_COLS]; // 127C
-    int leftEntityMap[GRID_ROWS][GRID_COLS]; // 1280
-    int topEntityMap[GRID_ROWS][GRID_COLS];
-    int bottomEntityMap[GRID_ROWS][GRID_COLS]; // 12A6
-
-    int auxTopRightEntityMap[GRID_ROWS][GRID_COLS]; // 12A4
-    int auxBottomRightEntityMap[GRID_ROWS][GRID_COLS]; // 12A8
-
-    int auxMap1282[GRID_ROWS][GRID_COLS];
-    int auxMap127A[GRID_ROWS][GRID_COLS];
-    int auxMap12CE[GRID_ROWS][GRID_COLS];
+    EntityType tileMap[GRID_ROWS][GRID_COLS]; // 127E
+    int16_t rightEntityMap[GRID_ROWS][GRID_COLS]; // 127C
+    int16_t leftEntityMap[GRID_ROWS][GRID_COLS]; // 1280
+    int16_t topEntityMap[GRID_ROWS][GRID_COLS];
+    int16_t bottomEntityMap[GRID_ROWS][GRID_COLS]; // 12A6
+    int16_t auxTopRightEntityMap[GRID_ROWS][GRID_COLS]; // 12A4
+    int16_t auxBottomRightEntityMap[GRID_ROWS][GRID_COLS]; // 12A8
+    int16_t auxMap1282[GRID_ROWS][GRID_COLS];
+    int16_t auxMap127A[GRID_ROWS][GRID_COLS];
+    int16_t auxMap12CE[GRID_ROWS][GRID_COLS];
 
     std::vector<int> bottomLeftEntityTable;
 
@@ -109,80 +186,6 @@ enum class NewLevelDialogResult : uint8_t {
     Cancelled
 };
 
-enum class EntityType : std::uint16_t
-{
-    // --- Empty / Player
-    None = 0x0000,
-
-    // --- Walls
-    Wall1 = 0xFFFD,
-    Wall2 = 0xFFFC,
-    Wall3 = 0xFFFB,
-    Wall4 = 0xFFFA,
-    Wall5 = 0xFFF9,
-    Wall6 = 0xFFF8,
-    Wall7 = 0xFFF7,
-    Wall8 = 0xFFF6,
-    Wall9 = 0xFFF5,
-
-    YellowBrick = 0xFFF4,
-    Diamond = 0xFFF3,
-    OneWayLeftToRight = 0xFFF2,
-    OneWayRightToLeft = 0xFFF1,
-    OneWayTopToBottom = 0xFFF0,
-    OneWayBottomToTop = 0xFFEF,
-
-    // --- Mobiles
-    PushableBrick = 0x0000,
-    ArrowUp = 0x0001,
-    ArrowDown = 0x0002,
-    ArrowLeft = 0x0003,
-    ArrowRight = 0x0004,
-
-    MagnetVertical = 0x0005,
-    MagnetHorizontal = 0x0006,
-
-    PusherUp = 0x0007,
-    PusherDown = 0x0008,
-    PusherLeft = 0x0009,
-    PusherRight = 0x000A,
-
-    CurvedArrowUp = 0x000B,
-    CurvedArrowDown = 0x000C,
-    CurvedArrowLeft = 0x000D,
-    CurvedArrowRight = 0x000E,
-
-    EnemyPropeller = 0x000F,
-    EnemyJaw = 0x0010,
-    EnemyPurple = 0x0011,
-    EnemySnake = 0x0012,
-    EnemyPropellerRound = 0x0013,
-
-    DeflectorLeft = 0x0014,
-    DeflectorRight = 0x0015,
-    RoundedPushableBrick = 0x0016,
-
-    UnknownA1 = 0x0017,
-    UnknownA2 = 0x0018,
-    UnknownA3 = 0x0019,
-    UnknownA4 = 0x001A,
-
-    Dispenser1 = 0x001B,
-    Dispenser2 = 0x001C,
-    Dispenser3 = 0x001D,
-    Dispenser4 = 0x001E,
-
-    Lava = 0x001F,
-    Lava2 = 0x0020,
-
-    Countdown = 0x003B,
-    UnknownX = 0x003A,
-    UnknownY = 0x0039,
-    UnknownZ = 0x0038,
-    UnknownLeftBrace = 0x0037,
-    UnknownPipe = 0x0036
-};
-
 struct EntityMappingEntry {
     EntityClass category;
     uint8_t     unk;
@@ -190,47 +193,48 @@ struct EntityMappingEntry {
     char        asciiChar;
 };
 
+// 02C0
 constexpr std::array<EntityMappingEntry, 56> ENTITY_MAPPINGS = {{
 
-    { EntityClass::Empty,  0x00, EntityType::None, ' ' },
-    { EntityClass::Player, 0x00, EntityType::None, 'K' },
+    { EntityClass::Empty,  0x00, EntityType::EMPTY_CELL, ' ' },
+    { EntityClass::Player, 0x00, EntityType::EMPTY_CELL, 'K' },
 
     // Walls
-    { EntityClass::Fixed, 0x00, EntityType::Wall1, '1' },
-    { EntityClass::Fixed, 0x00, EntityType::Wall2, '2' },
-    { EntityClass::Fixed, 0x00, EntityType::Wall3, '3' },
-    { EntityClass::Fixed, 0x00, EntityType::Wall4, '4' },
-    { EntityClass::Fixed, 0x00, EntityType::Wall5, '5' },
-    { EntityClass::Fixed, 0x00, EntityType::Wall6, '6' },
-    { EntityClass::Fixed, 0x00, EntityType::Wall7, '7' },
-    { EntityClass::Fixed, 0x00, EntityType::Wall8, '8' },
-    { EntityClass::Fixed, 0x00, EntityType::Wall9, '9' },
+    { EntityClass::Fixed, 0x00, EntityType::BOTTOM_LEFT_ROUND_WALL, '1' },
+    { EntityClass::Fixed, 0x00, EntityType::BOTTOM_ROUNDED_WALL, '2' },
+    { EntityClass::Fixed, 0x00, EntityType::BOTTOM_RIGHT_ROUND_WALL, '3' },
+    { EntityClass::Fixed, 0x00, EntityType::LEFT_ROUNDED_WALL, '4' },
+    { EntityClass::Fixed, 0x00, EntityType::SQUARE_WALL, '5' },
+    { EntityClass::Fixed, 0x00, EntityType::RIGHT_ROUNDED_WALL, '6' },
+    { EntityClass::Fixed, 0x00, EntityType::TOP_LEFT_ROUNDED_WALL, '7' },
+    { EntityClass::Fixed, 0x00, EntityType::TOP_ROUNDED_WALL, '8' },
+    { EntityClass::Fixed, 0x00, EntityType::TOP_RIGHT_ROUNDED_WALL, '9' },
 
-    { EntityClass::Fixed, 0x00, EntityType::YellowBrick, 'e' },
-    { EntityClass::Fixed, 0x00, EntityType::Diamond, '*' },
-    { EntityClass::Fixed, 0x00, EntityType::OneWayLeftToRight, 'f' },
-    { EntityClass::Fixed, 0x00, EntityType::OneWayRightToLeft, 'g' },
-    { EntityClass::Fixed, 0x00, EntityType::OneWayTopToBottom, 'h' },
-    { EntityClass::Fixed, 0x00, EntityType::OneWayBottomToTop, 'i' },
+    { EntityClass::Fixed, 0x00, EntityType::BREAKABLE_BRICK, 'e' },
+    { EntityClass::Fixed, 0x00, EntityType::DIAMOND, '*' },
+    { EntityClass::Fixed, 0x00, EntityType::ONE_WAY_LEFT_TO_RIGHT_PORTAL, 'f' },
+    { EntityClass::Fixed, 0x00, EntityType::ONE_WAY_RIGHT_TO_LEFT_PORTAL, 'g' },
+    { EntityClass::Fixed, 0x00, EntityType::ONE_WAY_TOP_TO_BOTTOM, 'h' },
+    { EntityClass::Fixed, 0x00, EntityType::ONE_WAY_BOTTOM_TO_TOP, 'i' },
 
     { EntityClass::Mobile, 0x00, EntityType::PushableBrick, 'b' },
-    { EntityClass::Mobile, 0x00, EntityType::ArrowUp, 'u' },
-    { EntityClass::Mobile, 0x00, EntityType::ArrowDown, 'd' },
+    { EntityClass::Mobile, 0x00, EntityType::ARROW_UP, 'u' },
+    { EntityClass::Mobile, 0x00, EntityType::ARROW_DOWN, 'd' },
     { EntityClass::Mobile, 0x00, EntityType::ArrowLeft, 'l' },
     { EntityClass::Mobile, 0x00, EntityType::ArrowRight, 'r' },
 
     { EntityClass::Mobile, 0x00, EntityType::MagnetVertical, 's' },
     { EntityClass::Mobile, 0x00, EntityType::MagnetHorizontal, 'S' },
 
-    { EntityClass::Mobile, 0x00, EntityType::PusherUp, 'U' },
-    { EntityClass::Mobile, 0x00, EntityType::PusherDown, 'D' },
-    { EntityClass::Mobile, 0x00, EntityType::PusherLeft, 'L' },
-    { EntityClass::Mobile, 0x00, EntityType::PusherRight, 'R' },
+    { EntityClass::Mobile, 0x00, EntityType::PUSHER_UP, 'U' },
+    { EntityClass::Mobile, 0x00, EntityType::PUSHER_DOWN, 'D' },
+    { EntityClass::Mobile, 0x00, EntityType::PUSHER_LEFT, 'L' },
+    { EntityClass::Mobile, 0x00, EntityType::PUSHER_RIGHT, 'R' },
 
-    { EntityClass::Mobile, 0x00, EntityType::CurvedArrowUp, '^' },
-    { EntityClass::Mobile, 0x00, EntityType::CurvedArrowDown, 'v' },
-    { EntityClass::Mobile, 0x00, EntityType::CurvedArrowLeft, '<' },
-    { EntityClass::Mobile, 0x00, EntityType::CurvedArrowRight, '>' },
+    { EntityClass::Mobile, 0x00, EntityType::CURVED_ARROW_UP, '^' },
+    { EntityClass::Mobile, 0x00, EntityType::CURVED_ARROW_DOWN, 'v' },
+    { EntityClass::Mobile, 0x00, EntityType::CURVED_ARROW_LEFT, '<' },
+    { EntityClass::Mobile, 0x00, EntityType::CURVED_ARROW_RIGHT, '>' },
 
     { EntityClass::Mobile, 0x00, EntityType::EnemyPropeller, 'T' },
     { EntityClass::Mobile, 0x00, EntityType::EnemyJaw, 'E' },
@@ -238,8 +242,8 @@ constexpr std::array<EntityMappingEntry, 56> ENTITY_MAPPINGS = {{
     { EntityClass::Mobile, 0x00, EntityType::EnemySnake, '~' },
     { EntityClass::Mobile, 0x00, EntityType::EnemyPropellerRound, '[' },
 
-    { EntityClass::Mobile, 0x00, EntityType::DeflectorLeft, 'a' },
-    { EntityClass::Mobile, 0x00, EntityType::DeflectorRight, 'c' },
+    { EntityClass::Mobile, 0x00, EntityType::DEFLECTOR_LEFT, 'a' },
+    { EntityClass::Mobile, 0x00, EntityType::DEFLECTOR_RIGHT, 'c' },
     { EntityClass::Mobile, 0x00, EntityType::RoundedPushableBrick, 'B' },
 
     { EntityClass::Mobile, 0x00, EntityType::UnknownA1, 'A' },
@@ -247,15 +251,15 @@ constexpr std::array<EntityMappingEntry, 56> ENTITY_MAPPINGS = {{
     { EntityClass::Mobile, 0x00, EntityType::UnknownA3, 'A' },
     { EntityClass::Mobile, 0x00, EntityType::UnknownA4, 'A' },
 
-    { EntityClass::Mobile, 0x00, EntityType::Dispenser1, 'F' },
-    { EntityClass::Mobile, 0x00, EntityType::Dispenser2, 'F' },
-    { EntityClass::Mobile, 0x00, EntityType::Dispenser3, 'F' },
-    { EntityClass::Mobile, 0x00, EntityType::Dispenser4, 'F' },
+    { EntityClass::Mobile, 0x00, EntityType::DISPENSER1, 'F' },
+    { EntityClass::Mobile, 0x00, EntityType::DISPENSER2, 'F' },
+    { EntityClass::Mobile, 0x00, EntityType::DISPENSER3, 'F' },
+    { EntityClass::Mobile, 0x00, EntityType::DISPENSER4, 'F' },
 
     { EntityClass::Mobile, 0x00, EntityType::Lava, 'H' },
     { EntityClass::Mobile, 0x00, EntityType::Lava2, 'H' },
 
-    { EntityClass::Mobile, 0x00, EntityType::Countdown, 'w' },
+    { EntityClass::Mobile, 0x00, EntityType::COUNTDOWN, 'w' },
     { EntityClass::Mobile, 0x00, EntityType::UnknownX, 'x' },
     { EntityClass::Mobile, 0x00, EntityType::UnknownY, 'y' },
     { EntityClass::Mobile, 0x00, EntityType::UnknownZ, 'z' },
@@ -269,8 +273,10 @@ constexpr std::array<EntityMappingEntry, 56> ENTITY_MAPPINGS = {{
 extern GameState g_gameState;
 
 extern uint16_t cursorRow, cursorCol;
-extern uint16_t spawnRow, spawnCol;
-extern uint16_t selectedTileValue, selectionState, selectedEntityIndex;
+extern uint16_t kyeRow, kyeCol;
+extern EntityType selectedTileValue;
+extern EntityType selectedEntityIndex;
+extern EntityType selectionState;
 
 extern int playerRow, playerCol;
 extern int previousRow, previousCol;
@@ -293,13 +299,6 @@ extern char g_defaultOpenSuffix[0x40];
 
 extern uint8_t   EntityTable[kMaxEntityLines];
 extern std::int16_t  g_cellClickFlags[GRID_ROWS * GRID_COLS];
-extern std::int16_t  g_entityIndexGrid[GRID_ROWS][GRID_COLS];
-
-extern uint16_t gameGrid[GRID_ROWS][GRID_COLS]; // 127E
-
-extern std::int16_t g_gridMain[GRID_ROWS][GRID_COLS];
-extern std::int16_t g_gridAuxA[GRID_ROWS][GRID_COLS];
-extern std::int16_t g_gridAuxB[GRID_ROWS][GRID_COLS];
 
 extern CallbackFn g_callbackTable[256];
 extern CallbackFn g_validateInternalBufferCallback;
@@ -334,7 +333,7 @@ void updateNextLevelMenuItem();
 int clearStatusLine(const char* str);
 void handleEvent(const SDL_Event& e);
 int renderLivesAndLevelInfo();
-void renderFrameByInteractionMode();
+void renderAllObjects();
 void handleDialogClose(NewLevelDialogResult result);
 
 using namespace std;
@@ -355,12 +354,11 @@ using VoidCallback = void (*)();
 
 extern int g_currentNameIndex;
 
-static constexpr std::uint16_t TILE_WALL5 = 0xFFF9;
-static constexpr std::uint16_t TILE_EMPTY = 0xFFFF;
-
 extern std::uint16_t g_activeSpawnerCount;
 
-extern std::uint16_t exitCoordLeft, exitCoordRight, exitState;
+extern EntityType exitCoordLeft;
+extern EntityType exitCoordRight;
+extern EntityType exitState;
 
 // Ces 3 “defaults” remplacent tes copies ds:045A, ds:0460, ds:0468.
 // Mets-y les contenus que tu as déjà dans tes tables/strings.
@@ -375,17 +373,6 @@ struct DecodeTileEntry {
     std::uint8_t  symbol; // offset +4 (asm: [si+2C4])
 };
 #pragma pack(pop)
-
-extern const DecodeTileEntry g_decodeTileTable[];
-
-struct Spawner {
-    EntityType  type;   // [172Eh]
-    int row;            // [1730h]
-    int col;            // [1732h]
-    int animFrame;      // [1734h]
-};
-
-extern std::vector<Spawner> g_spawners;
 
 struct SpriteSheet16 {
     // dessine un sprite 16x16 depuis (srcX,srcY) vers (dstX,dstY)
@@ -417,17 +404,6 @@ extern char** g_environmentStringPtrs;
 
 extern int pendingRow;
 extern int pendingCol;
-
-struct LevelChange
-{
-    uint16_t tileId;  // +0
-    uint16_t row;     // +2
-    uint16_t col;     // +4
-    uint16_t speed;   // +6
-};
-
-extern LevelChange changeList[MAX_CHANGES];
-extern uint16_t changeCount;
 
 using EntityHandler = void(*)(int entityIndex);
 
@@ -464,8 +440,6 @@ enum NotificationCode
 
 extern const std::unordered_map<int, NotificationEntry> notifications;
 extern SDL_Cursor* g_cursorArrow;
-
-typedef void (*VoidCallback)();
 
 #pragma pack(push,1)
 struct CallbackEntry
@@ -519,19 +493,25 @@ void handleUnknownEntityType(int entityIndex);
 void setStatusText(const std::string& text);
 void handleClickOnGridCell(uint32_t);
 void updateGridCell(int row, int col);
-void executeCurrentEntryAction(std::int16_t actionType,
-                               std::int16_t tileId,
-                               std::int16_t row,
-                               std::int16_t col);
+int executeCurrentEntryAction(int16_t actionType,
+                              EntityType tileId,
+                              int16_t row,
+                              int16_t col);
 int handleStandardCellClick(int row,int col);
 void handleSpecialSentinelClick();
-void renderWallTile(int row, int col, uint16_t tileValue);
-void spawnAtIfEmpty(int,int,int,uint16_t&);
+void renderWallTile(int row, int col, EntityType tileValue);
+void spawnAtIfEmpty(int targetRow, int targetCol, EntityType type, uint16_t& spawnDelayCounter);
 void animateMonsters();
 void invalidateWindow();
 void updateWindow();
 void gameMainLoopTick();
 int tickLevelFlow();
 void animateDiamonds();
+void handlePaintOrRenderRequest();
+
+extern std::string g_levelHintText;
+extern std::string g_levelPassword;
+extern std::string g_levelVictoryText;
+
 
 #endif // GAME_H
