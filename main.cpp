@@ -33,6 +33,11 @@ int main(int argc, char** argv)
         std::cout << "SDL_Init failed: " << SDL_GetError() << std::endl;
         return 1;
     }
+    if (!TTF_Init())
+    {
+        std::cout << "TTF init failed: " << SDL_GetError() << std::endl;
+        return 1;
+    }
     if (!SDL_CreateWindowAndRenderer("Kye (Modern)", 1280, 720, 0, &g_window, &g_renderer))
     {
         cout << "SDL window error: " << SDL_GetError() << endl;
@@ -53,6 +58,7 @@ int main(int argc, char** argv)
     bool running = true;
     int exitCode = 0;
 
+    Uint32 lastTick = SDL_GetTicks();
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
@@ -64,7 +70,17 @@ int main(int argc, char** argv)
         }
 
         processCallbackQueue(nullptr, nullptr);
-        handlePaintOrRenderRequest();
+        Uint32 now = SDL_GetTicks();
+
+        if (now - lastTick >= 100)
+        {
+            lastTick = now;
+
+            tickLevelFlow();
+            handlePaintOrRenderRequest();
+            updateLevelVisualsAndAnimations();
+            SDL_RenderPresent(g_renderer);
+        }
         SDL_Delay(16);
     }
 

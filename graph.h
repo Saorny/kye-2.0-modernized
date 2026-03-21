@@ -137,7 +137,7 @@ extern TTF_Font* g_font;
 
 int showFileMessage(const char* message);
 void runTileSparkleEffect(int effectId);
-void renderHudAndFrame();
+int renderHudAndFrame();
 void initializeLayoutRects();
 void drawText(int x, int y, const char* text, int len);
 void showWhatDialog();
@@ -153,5 +153,6 @@ void DLG_OK_FUNC();
 void drawTextAt(int16_t x, int16_t y, const char* text, int length);
 void showHelp();
 void showAboutDialog();
+void renderAllObjects();
 
 #endif // GRAPH_H

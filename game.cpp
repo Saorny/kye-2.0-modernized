@@ -23,7 +23,7 @@ int levelCount = 1;
 int g_hasPendingModal = 0;
 bool hasLevelList = false;
 int remainingLives = 3;
-int g_levelJustLoadedFlag = 1;
+
 int hasLevelTransition = 0;
 int selectedObjectIndex = -1;
 bool g_timerActive = false;
@@ -194,23 +194,19 @@ void updateLevelEntitiesEvery30Frames() {
 
 void moveAndRedrawEntity(int entityIndex, int newRow, int newCol)
 {
-    // EntityInfo& entity = g_gameState.entities[entityIndex];
+    auto& e = g_gameState.entities[entityIndex];
 
-    // int oldRow = entity.row;
-    // int oldCol = entity.col;
+    // clear old
+    g_gameState.tileMap[e.row][e.col] = EntityType::EMPTY_CELL;
 
-    // // redraw previous tile
-    // drawRectangleFromGrid(oldRow, oldCol);
+    // move
+    e.row = newRow;
+    e.col = newCol;
 
-    // // update entity position
-    // entity.row = newRow;
-    // entity.col = newCol;
+    // set new
+    g_gameState.tileMap[newRow][newCol] = (EntityType)entityIndex;
 
-    // // update tile map
-    // g_gameState.tileMap[newRow][newCol] = entityIndex;
-
-    // // render entity
-    // renderEntity(entityIndex);
+    renderEntity(entityIndex);
 }
 
 void showNewLevelDialog(SDL_Window* window)
@@ -426,8 +422,8 @@ void updateLivesDisplay()
         iteration++;
     }
 
-    previousRow = srcRow;
-    previousCol = srcCol;
+    previousRow = currentRow;
+    previousCol = currentCol;
 }
 
 int loadLevelByIndex(int level)
@@ -532,8 +528,8 @@ void resetLevelStateMemory()
     exitCoordRight = EntityType::SQUARE_WALL;
     exitState      = EntityType::BOTTOM_RIGHT_ROUND_WALL;
 
-    srcRow = 3;
-    srcCol = 3;
+    currentRow = 3;
+    currentCol = 3;
 
     kyeRow = 3;
     kyeCol = 3;
@@ -562,11 +558,14 @@ std::int16_t addEntity(EntityType entityCode, std::int16_t row, std::int16_t col
 {
     const std::uint16_t index = g_activeSpawnerCount;
 
-    g_cellClickFlags[cellIndex(row, col)] = index;
     g_gameState.entities[index].entityType = entityCode;
-    g_gameState.entities[index].row    = row;
-    g_gameState.entities[index].col    = col;
-    g_gameState.entities[index].animFrame  = 0;
+    g_gameState.entities[index].row = row;
+    g_gameState.entities[index].col = col;
+    g_gameState.entities[index].animFrame = 0;
+
+    // 🔥 CRITIQUE
+    g_gameState.tileMap[row][col] = (EntityType)index;
+
     ++g_activeSpawnerCount;
     return index;
 }
@@ -644,8 +643,8 @@ void loadLevelRow(int row, const char* lineData)
                 {
                     g_gameState.tileMap[row][col] = EntityType::KYE_LOCATION;
                     cout << "setting Kye (" << row << ";" << col << ") =" << (int)entityCode << endl;
-                    srcRow = row;
-                    srcCol = col;   
+                    currentRow = row;
+                    currentCol = col;   
 
                     kyeRow = row;
                     kyeCol = col;
@@ -693,8 +692,8 @@ int postLoadLevel()
     {
         if (g_gameState.tileMap[r][c] == EntityType::KYE_LOCATION)
         {
-            srcRow = r;
-            srcCol = c;
+            currentRow = r;
+            currentCol = c;
             playerFound = true;
         }
     }
@@ -702,8 +701,8 @@ int postLoadLevel()
     if (!playerFound)
     {
         cout << "Not found, resetting Kye location..." << endl;
-        srcRow = 3;
-        srcCol = 3;
+        currentRow = 3;
+        currentCol = 3;
         kyeRow = 3;
         kyeCol = 3;
         selectedTileValue = EntityType::EMPTY;
@@ -798,25 +797,25 @@ void handleKyeMovement()
 
         // ASM: push srcCol ; push srcRow ; call drawRectangleFromGrid
         // => si ta signature est drawRectangleFromGrid(row, col), ça correspond à (srcRow, srcCol) legacy.
-        drawRectangleFromGrid(srcRow, srcCol);
+        drawRectangleFromGrid(currentRow, currentCol);
 
         // Restore cursor position
-        srcRow = previousRow;
-        srcCol = previousCol;
+        currentRow = previousRow;
+        currentCol = previousCol;
 
-        if (0 <= srcRow && srcRow < GRID_ROWS && 0 <= srcCol && srcCol < GRID_COLS)
-            g_gameState.tileMap[srcRow][srcCol] = EntityType::KYE_LOCATION;
+        if (0 <= currentRow && currentRow < GRID_ROWS && 0 <= currentCol && currentCol < GRID_COLS)
+            g_gameState.tileMap[currentRow][currentCol] = EntityType::KYE_LOCATION;
 
         runTileSparkleEffect(1);
         hasLevelTransition = 0;
         return;
     }
 
-    if (previousRow == srcRow && previousCol == srcCol)
+    if (previousRow == currentRow && previousCol == currentCol)
         return;
 
-    const int dLegacyRow = previousRow - srcRow;
-    const int dLegacyCol = previousCol - srcCol;
+    const int dLegacyRow = previousRow - currentRow;
+    const int dLegacyCol = previousCol - currentCol;
 
     const int stepLegacyRow = sgn(dLegacyRow); // ax dans ASM
     const int stepLegacyCol = sgn(dLegacyCol); // dx dans ASM
@@ -852,10 +851,10 @@ int handlePendingBlock(int rowIndex, int colIndex)
     pendingRow = row;
     pendingCol = col;
 
-    int dRow = std::abs(row - srcRow);
+    int dRow = std::abs(row - currentRow);
     if (dRow <= 1)
     {
-        int dCol = std::abs(col - srcCol);
+        int dCol = std::abs(col - currentCol);
         if (dCol <= 1)
         {
             return 0;
@@ -1336,94 +1335,60 @@ inline int countDiamondsInGrid()
 
 int renderLivesAndLevelInfo()
 {
-    char textBuffer[0x6C] = {0};
-    uint8_t stringOverflowFlag = 0;
+    const int hudX = g_gridRectPx.x;
+    const int hudY = g_gridRectPx.y + g_gridRectPx.h + 4;
 
-    // ===============================
-    // MODE EDIT  (ancien loc_299B)
-    // ===============================
+    SDL_FRect hudRect{
+        static_cast<float>(hudX),
+        static_cast<float>(hudY),
+        static_cast<float>(g_gridRectPx.w),
+        20.0f
+    };
 
-    if (g_interactionMode == GameInteractionMode::PendingBlock)
-    {
-        int count = 0;
-
-        for (int col = 0; col < 30; ++col)
-        {
-            for (int row = 0; row < 20; ++row)
-            {
-                if (g_gameState.tileMap[row][col] == EntityType::DIAMOND)
-                    ++count;
-            }
-        }
-
-        prepareAndCallProcessMainLoop(textBuffer, 0x4DC, count);
-
-        int len = std::strlen(textBuffer);
-        drawText(baseX + 5, baseY, textBuffer, len);
-
-        prepareAndCallProcessMainLoop(textBuffer, 0x4ED, 0x2D5E);
-
-        len = std::strlen(textBuffer);
-
-        if (len > 0x19)
-        {
-            len = 0x19;
-            stringOverflowFlag = 0;
-        }
-
-        drawText(baseX + 0x6E, baseY, textBuffer, len);
-
-        return 1;
-    }
-
-    if (g_interactionMode != GameInteractionMode::NormalPlay)
-        return 0;
-
-    SDL_SetRenderDrawColor(g_renderer, 160, 160, 160, 255);
-
-    SDL_FRect hudRect;
-    hudRect.x = baseX;
-    hudRect.y = baseY;
-    hudRect.w = 0x46;
-    hudRect.h = 0x11;
-
-    SDL_RenderRect(g_renderer, &hudRect);
+    SDL_SetRenderDrawColor(g_renderer, 255, 255, 255, 255);
+    SDL_RenderFillRect(g_renderer, &hudRect);
 
     int xOffsetLives = 0;
 
     for (int i = 0; i < remainingLives; ++i)
     {
-        SDL_FRect dst;
-        dst.x = baseX + xOffsetLives + 1;
-        dst.y = baseY + 1;
-        dst.w = 16;
-        dst.h = 16;
+        SDL_FRect dst{
+            static_cast<float>(hudX + xOffsetLives + 1),
+            static_cast<float>(hudY + 1),
+            16.0f,
+            16.0f
+        };
 
-        SDL_RenderTexture(g_renderer, g_kyeTexture, nullptr, &dst);
+        SDL_FRect src{0.0f, 0.0f, 16.0f, 16.0f};
 
+        SDL_RenderTexture(g_renderer, g_sheetKye.tex, &src, &dst);
         xOffsetLives += 0x14;
     }
 
-    prepareAndCallProcessMainLoop(textBuffer, 0x4B8, levelIndex);
+    char buffer[128];
 
-    int len = std::strlen(textBuffer);
-    drawText(baseX + 0x50, baseY, textBuffer, len);
+    snprintf(buffer, sizeof(buffer), "Level: %d", levelIndex);
+    drawTextAt(hudX + 70, hudY + 2, buffer, strlen(buffer));
 
-    int count = 0;
+    snprintf(buffer, sizeof(buffer), "Diamonds left: %d", remainingDiamondCount);
+    drawTextAt(hudX + 160, hudY + 2, buffer, strlen(buffer));
 
-    for (int col = 0; col < GRID_COLS; ++col)
+    int separatorX = hudX + 300;
+    SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
+
+    SDL_RenderLine(
+        g_renderer,
+        (float)separatorX,
+        (float)hudY,
+        (float)separatorX,
+        (float)(hudY + 20)
+    );
+    if (!g_levelHintText.empty())
     {
-        for (int row = 0; row < GRID_ROWS; ++row)
-        {
-            if (g_gameState.tileMap[row][col] == EntityType::DIAMOND)
-                ++count;
-        }
+        drawTextAt(hudX + 320, hudY + 2,
+                   g_levelHintText.c_str(),
+                   g_levelHintText.length());
     }
-
-    prepareAndCallProcessMainLoop(textBuffer, 0x4C6, count);
-
-    len = std::strlen(textBuffer);
-    drawText(baseX + 0xA0, baseY, textBuffer, len);
 
     return 1;
 }
@@ -1554,8 +1519,8 @@ int executeCurrentEntryAction(int16_t actionType,
             {
                 g_gameState.tileMap[row][col] = EntityType::KYE_LOCATION;
 
-                srcRow = row;
-                srcCol = col;
+                currentRow = row;
+                currentCol = col;
 
                 handleSpecialSentinelClick();
             }
@@ -1601,11 +1566,11 @@ void updateGridCell(int row, int col)
     }
     else
     {
-        renderWallTile(row, col, (EntityType)tile);
+        renderStaticObjects(row, col, (EntityType)tile);
     }
 }
 
-void renderWallTile(int row, int col, EntityType tileValue)
+void renderStaticObjects(int row, int col, EntityType tileValue)
 {
     if (!g_renderer || !g_sheetStatics.tex) {
         cout << 'Missing resources renderFullWallLayerSdl' << endl;
@@ -1633,7 +1598,7 @@ void renderWallTile(int row, int col, EntityType tileValue)
         case EntityType::TOP_ROUNDED_WALL: srcRect.x = 0xA0; srcRect.y = 0x00; break;
         case EntityType::TOP_RIGHT_ROUNDED_WALL: srcRect.x = 0xB0; srcRect.y = 0x00; break;
         case EntityType::BREAKABLE_BRICK: srcRect.x = 0x00; srcRect.y = 0x00; break;
-        case EntityType::DIAMOND: srcRect.x = 0xC0; srcRect.y = 0x10; break;
+        case EntityType::DIAMOND: srcRect.x = 0xC0; srcRect.y = 0x00; break;
         case EntityType::ONE_WAY_LEFT_TO_RIGHT_PORTAL: srcRect.x = 0xE0; srcRect.y = 0x00; break;
         case EntityType::ONE_WAY_RIGHT_TO_LEFT_PORTAL: srcRect.x = 0xE0; srcRect.y = 0x10; break;
         case EntityType::ONE_WAY_TOP_TO_BOTTOM: srcRect.x = 0xD0; srcRect.y = 0x0; break;
@@ -1996,28 +1961,33 @@ void animateDiamonds()
     if (frameCounter % 10 != 0)
         return;
 
-    for (int row = 0; row < GRID_ROWS; row++)
+    for (int row = 0; row < GRID_ROWS; ++row)
     {
-        for (int col = 0; col < GRID_COLS; col++)
+        for (int col = 0; col < GRID_COLS; ++col)
         {
             if (g_gameState.tileMap[row][col] != EntityType::DIAMOND)
                 continue;
 
-            int dstX = col * cellWidth;
-            int dstY = row * cellHeight;
+            int dstX = gridOriginX + col * cellWidth;
+            int dstY = gridOriginY + row * cellHeight;
 
             int srcX = 0xC0;
-            int srcY = 0;
+            int srcY = ((rand() % 2) == 1) ? 0x10 : 0x00;
+            SDL_FRect src{
+                (float)srcX,
+                (float)srcY,
+                16.0f,
+                16.0f
+            };
 
-            if ((std::rand() % 3) == 1)
-                srcY = 16;
+            SDL_FRect dst{
+                (float)dstX,
+                (float)dstY,
+                16.0f,
+                16.0f
+            };
 
-            g_blockSheet.blit16(
-                dstX,
-                dstY,
-                srcX,
-                srcY
-            );
+            SDL_RenderTexture(g_renderer, g_sheetStatics.tex, &src, &dst);
         }
     }
 }
@@ -2229,21 +2199,30 @@ void animateMonsters()
 
         const int type = static_cast<int>(entity.entityType);
 
-        if (type < 0x0F || type > 0x13)
+        if (type < (int)EntityType::EnemyPropeller || type > (int)EntityType::EnemyPropellerRound)
             continue;
 
-        const int dstY = entity.row * cellHeight;
-        const int dstX = entity.col * cellWidth;
+        const int dstX = gridOriginX + entity.col * cellWidth;
+        const int dstY = gridOriginY + entity.row * cellHeight;
 
-        const int srcX = type << 4;
-        const int srcY = entity.animFrame << 4;
+        const int srcX = type * 16;
+        const int srcY = entity.animFrame * 16;
 
-        g_blockSheet.blit16(
-            dstX,
-            dstY,
-            srcX,
-            srcY
-        );
+        SDL_FRect src{
+            (float)srcX,
+            (float)srcY,
+            16.0f,
+            16.0f
+        };
+
+        SDL_FRect dst{
+            (float)dstX,
+            (float)dstY,
+            16.0f,
+            16.0f
+        };
+
+        SDL_RenderTexture(g_renderer, g_sheetMobiles.tex, &src, &dst);
 
         entity.animFrame = (entity.animFrame + 1) % 4;
     }
@@ -2258,44 +2237,44 @@ void handleDirectionalHotkeyAndAdvanceLevel(SDL_Keycode key)
     {
         // Flèches
         case SDLK_LEFT:
-            previousRow = srcRow - 1;
-            previousCol = srcCol;
+            previousRow = currentRow;
+            previousCol = currentCol - 1;
             break;
 
         case SDLK_RIGHT:
-            previousRow = srcRow + 1;
-            previousCol = srcCol;
+            previousRow = currentRow;
+            previousCol = currentCol + 1;
             break;
 
         case SDLK_UP:
-            previousRow = srcRow;
-            previousCol = srcCol - 1;
+            previousRow = currentRow - 1;
+            previousCol = currentCol;
             break;
 
         case SDLK_DOWN:
-            previousRow = srcRow;
-            previousCol = srcCol + 1;
+            previousRow = currentRow + 1;
+            previousCol = currentCol;
             break;
 
         // Pavé numérique (diagonales)
         case SDLK_KP_7: // up-left
-            previousRow = srcRow - 1;
-            previousCol = srcCol - 1;
+            previousRow = currentRow - 1;
+            previousCol = currentCol - 1;
             break;
 
         case SDLK_KP_1: // down-left
-            previousRow = srcRow - 1;
-            previousCol = srcCol + 1;
+            previousRow = currentRow - 1;
+            previousCol = currentCol + 1;
             break;
 
         case SDLK_KP_9: // up-right
-            previousRow = srcRow + 1;
-            previousCol = srcCol - 1;
+            previousRow = currentRow + 1;
+            previousCol = currentCol - 1;
             break;
 
         case SDLK_KP_3: // down-right
-            previousRow = srcRow + 1;
-            previousCol = srcCol + 1;
+            previousRow = currentRow + 1;
+            previousCol = currentCol + 1;
             break;
 
         default:
@@ -2386,7 +2365,7 @@ int tickLevelFlow()
         {
             runTileSparkleEffect(2);
 
-            drawRectangleFromGrid(srcRow, srcCol);
+            drawRectangleFromGrid(currentRow, currentCol);
 
             showGameOverDialog();
 
@@ -2474,77 +2453,6 @@ int clearStatusLine(const char* str)
     return 1;
 }
 
-void renderFullWallLayer()
-{
-    if (!g_renderer || !g_sheetStatics.tex)
-        return;
-
-    for (int row = 0; row < GRID_ROWS; ++row)
-    {
-        for (int col = 0; col < GRID_COLS; ++col)
-        {
-            const EntityType tileValue = g_gameState.tileMap[row][col];
-
-            if (tileValue == EntityType::EMPTY_CELL)
-            {
-                SDL_FRect dst{
-                    float(gridOriginX + col * cellWidth),
-                    float(gridOriginY + row * cellHeight),
-                    float(cellWidth),
-                    float(cellHeight)
-                };
-
-                SDL_SetRenderDrawColor(g_renderer,255,255,255,255);
-                SDL_RenderFillRect(g_renderer,&dst);
-                continue;
-            }
-
-            if (tileValue >= EntityType::ONE_WAY_TOP_TO_BOTTOM)
-            {
-                renderWallTile(row, col, tileValue);
-            }
-        }
-    }
-}
-
-void renderAllEntities()
-{
-    for (int i = 0; i < g_activeSpawnerCount ; ++i)
-    {
-        renderEntity(i);
-    }
-}
-
-void renderAllObjects()
-{
-    if (g_interactionMode == GameInteractionMode::NormalPlay)
-    {
-        renderFullWallLayer();
-        renderAllEntities();
-
-        if (g_levelJustLoadedFlag)
-        {
-            g_levelJustLoadedFlag = 0;
-            runTileSparkleEffect(1);
-        }
-        else
-        {
-            runTileSparkleEffect(0);
-        }
-        return;
-    }
-
-    if (g_interactionMode == GameInteractionMode::PendingBlock)
-    {
-        renderFullWallLayer();
-        renderAllEntities();
-        runTileSparkleEffect(0);
-        return;
-    }
-
-    return;
-}
-
 static void dispatchEventWithDefaults(int16_t eventCode)
 {
     handleEngineEvent(eventCode, /*param0=*/0, /*param1=*/1);
@@ -2611,10 +2519,18 @@ void destroyGraphicsResources()
 
 void handlePaintOrRenderRequest()
 {
+    if (g_renderer == nullptr)
+        return;
+    if (g_hasDeviceContext != 0)
+    {
+        advanceToNextLevelOrBlock();
+    }
+    g_hasDeviceContext = 1;
     SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
     SDL_RenderClear(g_renderer);
-    renderAllObjects();
-    SDL_RenderPresent(g_renderer);
+    initializeLayoutRects();
+    renderHudAndFrame();
+    g_hasDeviceContext = 0;
 }
 
 void handleEvent(const SDL_Event& e)
@@ -2766,117 +2682,116 @@ void processCallbackQueueFromEngineEvent()
     );
 }
 
-void processKyeCollision(int stepRow, int stepCol)
+void advanceKyeAndCarryTile(int stepRow, int stepCol)
 {
-    if (stepRow != 0 && stepCol != 0)
-        return;
-
-    const int newRow = srcRow + stepRow;
-    const int newCol = srcCol + stepCol;
-
-    if (newRow < 0 || newRow >= GRID_ROWS ||
-        newCol < 0 || newCol >= GRID_COLS)
-        return;
-
-    EntityType cell = g_gameState.tileMap[newRow][newCol];
-
-    // =========================================================
-    // 2️⃣ Case vide
-    // =========================================================
-    if (cell == EntityType::EMPTY_CELL)
+    if (selectedObjectIndex == 0xFFFF)
     {
-        g_gameState.tileMap[srcRow][srcCol] = EntityType::EMPTY_CELL;
-        srcRow = newRow;
-        srcCol = newCol;
-        g_gameState.tileMap[srcRow][srcCol] = EntityType::KYE_LOCATION;
-        return;
+        drawRectangleFromGrid(currentRow, currentCol);
+    }
+    else
+    {
+        g_gameState.tileMap[currentRow][currentCol] = static_cast<EntityType>(selectedObjectIndex);
+
+        renderStaticObjects(currentRow, currentCol, g_gameState.tileMap[currentRow][currentCol]);
     }
 
-    // =========================================================
-    // 3️⃣ Tiles fixes spéciaux
-    // =========================================================
+    currentRow += stepRow;
+    currentCol += stepCol;
 
-    switch (cell)
+    selectedObjectIndex = static_cast<std::uint16_t>(
+        g_gameState.tileMap[currentRow][currentCol]
+    );
+
+    g_gameState.tileMap[currentRow][currentCol] = EntityType::KYE_LOCATION;
+
+    runTileSparkleEffect(0);
+}
+
+int processKyeCollision(int stepRow, int stepCol)
+{
+    if ((stepRow != 0 && stepCol != 0) || (stepRow == 0 && stepCol == 0))
+        return 0;
+
+    int newRow = currentRow + stepRow;
+    int newCol = currentCol + stepCol;
+
+    EntityType target = g_gameState.tileMap[newRow][newCol];
+
+    if (target == EntityType::EMPTY_CELL)
     {
-        case EntityType::BREAKABLE_BRICK:
-            cell = EntityType::EMPTY_CELL;
-            break;
-
-        case EntityType::DIAMOND:
-            cell = EntityType::EMPTY_CELL;
-            --matchedEntryCount;
-            break;
-
-        case EntityType::ONE_WAY_LEFT_TO_RIGHT_PORTAL:
-            if (stepRow == 0 && stepCol == 1) break;
-            return;
-
-        case EntityType::ONE_WAY_RIGHT_TO_LEFT_PORTAL:
-            if (stepRow == 0 && stepCol == -1) break;
-            return;
-
-        case EntityType::ONE_WAY_TOP_TO_BOTTOM:
-            if (stepRow == 1 && stepCol == 0) break;
-            return;
-
-        case EntityType::ONE_WAY_BOTTOM_TO_TOP:
-            if (stepRow == -1 && stepCol == 0) break;
-            return;
+        advanceKyeAndCarryTile(stepRow, stepCol);
+        return 1;
     }
 
-    if (cell >= EntityType::EMPTY_CELL)
+    if (target == EntityType::BREAKABLE_BRICK)
     {
-        const EntityType entityIndex = cell;
-        // const int entityBase = entityIndex * 8;
-
-        // const int entityType =
-        //     *reinterpret_cast<int16_t*>(
-        //         reinterpret_cast<uint8_t*>(EntityTable) +
-        //         entityBase + 0
-        //     );
-
-        // if (entityType == (int)EntityType::Lava)
-        // {
-        //     --remainingLives;
-        //     renderLivesAndLevelInfo();
-        //     return;
-        // }
-
-        // 0x20 → bloquant
-        // if (entityType == 0x20)
-        //     return;
-
-        // const int targetRow =
-        //     *reinterpret_cast<int16_t*>(
-        //         reinterpret_cast<uint8_t*>(EntityTable) +
-        //         entityBase + 2
-        //     ) + stepRow;
-
-        // const int targetCol =
-        //     *reinterpret_cast<int16_t*>(
-        //         reinterpret_cast<uint8_t*>(EntityTable) +
-        //         entityBase + 4
-        //     ) + stepCol;
-
-        // if (targetRow < 0 || targetRow >= GRID_ROWS ||
-        //     targetCol < 0 || targetCol >= GRID_COLS)
-        //     return;
-
-        // if (g_gameState.tileMap[targetRow][targetCol] != EntityType::EMPTY_CELL)
-        //     return;
-
-        // // déplacer entité
-        // g_gameState.tileMap[targetRow][targetCol] = entityIndex;
-        // g_gameState.tileMap[newRow][newCol] = EntityType::EMPTY_CELL;
-
-        // // déplacer Kye
-        // g_gameState.tileMap[srcRow][srcCol] = EntityType::EMPTY_CELL;
-        // srcRow = newRow;
-        // srcCol = newCol;
-        // g_gameState.tileMap[srcRow][srcCol] = EntityType::CELL_FLAG_SENTINEL;
-
-        // return;
+        advanceKyeAndCarryTile(stepRow, stepCol);
+        selectedObjectIndex = 0xFFFF;
+        return 1;
     }
+
+    if (target == EntityType::DIAMOND)
+    {
+        advanceKyeAndCarryTile(stepRow, stepCol);
+        selectedObjectIndex = 0xFFFF;
+        --remainingDiamondCount;
+        renderLivesAndLevelInfo();
+        return 1;
+    }
+
+    if ((int)target >= 0 && (int)target < g_gameState.entities.size())
+    {
+        int entityIndex = (int)target;
+        EntityInfo& e = g_gameState.entities[entityIndex];
+
+        if (e.entityType == EntityType::Lava)
+        {
+            --remainingLives;
+            updateLivesDisplay();
+            renderLivesAndLevelInfo();
+            return 0;
+        }
+
+        if (e.entityType == EntityType::EMPTY_CELL)
+            return 0;
+
+        int pushRow = e.row + stepRow;
+        int pushCol = e.col + stepCol;
+
+        if (pushRow < 0 || pushRow >= GRID_ROWS ||
+            pushCol < 0 || pushCol >= GRID_COLS)
+            return 0;
+
+        EntityType pushTarget = g_gameState.tileMap[pushRow][pushCol];
+
+        if (pushTarget == EntityType::EMPTY_CELL)
+        {
+            moveAndRedrawEntity(entityIndex, pushRow, pushCol);
+            advanceKyeAndCarryTile(stepRow, stepCol);
+            return 1;
+        }
+
+        if ((int)pushTarget >= 0 && (int)pushTarget < g_activeSpawnerCount)
+        {
+            int targetEntityIndex = (int)pushTarget;
+            EntityInfo& targetEntity = g_gameState.entities[targetEntityIndex];
+
+            if (targetEntity.entityType == EntityType::Lava)
+            {
+                if (!replaceEntityIfTargetMatches(entityIndex, pushRow, pushCol))
+                {
+                    moveAndRedrawEntity(entityIndex, pushRow, pushCol);
+                }
+
+                advanceKyeAndCarryTile(stepRow, stepCol);
+                return 1;
+            }
+        }
+
+        return 0;
+    }
+
+    return 0;
 }
 
 // --- Common handler for “smart” mobile entities (type 0, 20–26, etc.) ---
@@ -2908,39 +2823,40 @@ void handleArrowUp(int entityIndex)
     const int newRow = pendingRow;
     const int newCol = pendingCol;
 
-    const int16_t targetIndex = g_gameState.rightEntityMap[newRow][newCol];
+    const EntityType target = g_gameState.tileMap[newRow][newCol];
 
-    // if (targetIndex == EntityType::EMPTY_CELL)
-    // {
-    //     moveAndRedrawEntity(entityIndex, newRow, newCol - 1);
-    //     handleUnknownEntityType(entityIndex);
-    //     return;
-    // }
+    if (target == EntityType::EMPTY_CELL)
+    {
+        moveAndRedrawEntity(entityIndex, newRow, newCol - 1);
+        handleUnknownEntityType(entityIndex);
+        return;
+    }
 
-    // if (replaceEntityIfTargetMatches(entityIndex, newRow, newCol - 1) != 0)
-    // {
-    //     handleUnknownEntityType(entityIndex);
-    //     return;
-    // }
+    if (replaceEntityIfTargetMatches(entityIndex, newRow, newCol - 1) != 0)
+    {
+        handleUnknownEntityType(entityIndex);
+        return;
+    }
 
-    // if (targetIndex >= EntityType::EMPTY_CELL)
-    // {
-    //     const EntityType targetType = g_gameState.entities[targetIndex].entityType;
+    if ((int)target >= 0 && (int)target < g_activeSpawnerCount)
+    {
+        int targetIndex = (int)target;
+        EntityInfo& t = g_gameState.entities[targetIndex];
 
-    //     if (targetType == EntityType::DEFLECTOR_RIGHT)
-    //     {
-    //         g_gameState.entities[entityIndex].entityType = EntityType::ArrowRight;
-    //         handleUnknownEntityType(entityIndex);
-    //         return;
-    //     }
+        if (t.entityType == EntityType::DEFLECTOR_RIGHT)
+        {
+            g_gameState.entities[entityIndex].entityType = EntityType::ArrowRight;
+            handleUnknownEntityType(entityIndex);
+            return;
+        }
 
-    //     if (targetType == EntityType::DEFLECTOR_LEFT)
-    //     {
-    //         g_gameState.entities[entityIndex].entityType= EntityType::ArrowLeft;
-    //         handleUnknownEntityType(entityIndex);
-    //         return;
-    //     }
-    // }
+        if (t.entityType == EntityType::DEFLECTOR_LEFT)
+        {
+            g_gameState.entities[entityIndex].entityType = EntityType::ArrowLeft;
+            handleUnknownEntityType(entityIndex);
+            return;
+        }
+    }
 
     handleUnknownEntityType(entityIndex);
 }
@@ -3991,7 +3907,6 @@ static constexpr std::array<EntityHandler, 56> ENTITY_HANDLERS = {{
 
 void gameMainLoopTick()
 {
-    // frameCounter++
     ++frameCounter;
 
     if (frameCounter > 0x7D00)
@@ -4003,11 +3918,11 @@ void gameMainLoopTick()
 
     while (entityIndex < g_activeSpawnerCount)
     {
-        uint16_t entityType = EntityTable[entityIndex];
+        EntityType entityType = g_gameState.entities[entityIndex].entityType;
 
-        if (entityType <= 0x3B)
+        if (entityType <= EntityType::COUNTDOWN)
         {
-            ENTITY_HANDLERS[entityType](entityIndex);
+            ENTITY_HANDLERS[(int)entityType](entityIndex);
         }
         else
         {

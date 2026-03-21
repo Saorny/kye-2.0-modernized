@@ -86,7 +86,6 @@ EntityType g_entityIndexGrid[GRID_ROWS][GRID_COLS] = {};
 // Cell click flags / entity tables
 // --------------------------------------------------
 int16_t g_cellClickFlags[GRID_ROWS * GRID_COLS] = {};
-uint8_t EntityTable[kMaxEntityLines] = {};
 
 // --------------------------------------------------
 // Status line
@@ -104,8 +103,8 @@ VoidCallback g_configureFileMode = nullptr;
 VoidCallback g_invokeExternalCallbackFn = &noopCallback;
 int g_levelIndex = 1;
 
-std::int16_t srcRow = 0;
-std::int16_t srcCol = 0;
+std::int16_t currentRow = 0;
+std::int16_t currentCol = 0;
 std::int16_t cellWidth = 16;
 std::int16_t cellHeight = 16;
 
@@ -214,3 +213,4 @@ int stringBufferCapacity = 512;
 int g_entryRowTable[1] = {0};
 int g_entryColTable[1] = {0};
 int g_entryEnabledTable[1] = {0};
+int g_levelJustLoadedFlag = 1;

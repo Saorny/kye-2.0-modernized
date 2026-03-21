@@ -56,8 +56,8 @@ static constexpr int kMaxEntityLines = 256;
 // static constexpr std::int16_t CELL_FLAG_EMPTY    = static_cast<std::int16_t>(0xFFFF);
 // static constexpr std::int16_t CELL_FLAG_SENTINEL = static_cast<std::int16_t>(0xFFFE);
 
-extern std::int16_t srcRow;
-extern std::int16_t srcCol;
+extern std::int16_t currentRow;
+extern std::int16_t currentCol;
 
 
 enum class EntityType : std::uint16_t
@@ -297,7 +297,6 @@ extern bool g_openFileDialogAccepted;
 extern char g_openFileDialogPath[0x100];
 extern char g_defaultOpenSuffix[0x40];
 
-extern uint8_t   EntityTable[kMaxEntityLines];
 extern std::int16_t  g_cellClickFlags[GRID_ROWS * GRID_COLS];
 
 extern CallbackFn g_callbackTable[256];
@@ -333,7 +332,6 @@ void updateNextLevelMenuItem();
 int clearStatusLine(const char* str);
 void handleEvent(const SDL_Event& e);
 int renderLivesAndLevelInfo();
-void renderAllObjects();
 void handleDialogClose(NewLevelDialogResult result);
 
 using namespace std;
@@ -480,13 +478,15 @@ extern bool toolboxCreated;
 extern std::int16_t cellWidth;
 extern std::int16_t cellHeight;
 
+extern int g_levelJustLoadedFlag;
+
 void moveAndRedrawEntity(int entityIndex, int row, int col);
 void markEntryInactive(int index);
 void finalizeLevelVisuals();
 void updateLivesDisplay();
 void loadLevelRow(int col, const char* data);
 int postLoadLevel();
-void processKyeCollision(int row, int col);
+int processKyeCollision(int row, int col);
 void handleEngineEvent(uint16_t, uint16_t, uint16_t);
 void cleanupAndTerminate(int code);
 void handleUnknownEntityType(int entityIndex);
@@ -499,7 +499,7 @@ int executeCurrentEntryAction(int16_t actionType,
                               int16_t col);
 int handleStandardCellClick(int row,int col);
 void handleSpecialSentinelClick();
-void renderWallTile(int row, int col, EntityType tileValue);
+void renderStaticObjects(int row, int col, EntityType tileValue);
 void spawnAtIfEmpty(int targetRow, int targetCol, EntityType type, uint16_t& spawnDelayCounter);
 void animateMonsters();
 void invalidateWindow();
@@ -508,6 +508,7 @@ void gameMainLoopTick();
 int tickLevelFlow();
 void animateDiamonds();
 void handlePaintOrRenderRequest();
+void updateLevelVisualsAndAnimations();
 
 extern std::string g_levelHintText;
 extern std::string g_levelPassword;
