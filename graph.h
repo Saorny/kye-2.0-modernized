@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
+#include "game.h"
 
 using VoidCallback = void (*)();
 
@@ -154,5 +155,6 @@ void drawTextAt(int16_t x, int16_t y, const char* text, int length);
 void showHelp();
 void showAboutDialog();
 void renderAllObjects();
+void renderStaticObjects(int row, int col, EntityType tileValue);
 
 #endif // GRAPH_H

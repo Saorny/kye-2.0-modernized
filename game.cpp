@@ -167,23 +167,28 @@ void advanceToNextLevelOrBlock()
     g_hasDeviceContext = false;
 }
 
-void updateLevelEntitiesEvery30Frames() {
-    if (frameCounter % 30 != 0) return;
+void updateCountdownEntities()
+{
+    if (frameCounter % 30 != 0)
+        return;
 
-    for (int i = 0; i < g_activeSpawnerCount; ++i) {
-        auto& entry = g_gameState.entities[i];
+    for (int i = 0; i < g_activeSpawnerCount; ++i)
+    {
+        auto& e = g_gameState.entities[i];
 
-        if (entry.entityType < EntityType::UNKNOWN || entry.entityType > EntityType::COUNTDOWN) {
+        if (e.entityType < EntityType::COUNTDOWN_0 || e.entityType > EntityType::COUNTDOWN_9)
             continue;
-        }
 
-        int row = entry.row;
-        int col = entry.col;
+        int row = e.row;
+        int col = e.col;
 
-        if (entry.entityType > EntityType::UNKNOWN) {
-            entry.entityType = (EntityType)((int)entry.entityType - 1);
+        if (e.entityType > EntityType::COUNTDOWN_0)
+        {
+            e.entityType = EntityType((int)e.entityType - 1);
             moveAndRedrawEntity(i, row, col);
-        } else {
+        }
+        else
+        {
             drawRectangleFromGrid(row, col);
             markEntryInactive(i);
         }
@@ -506,7 +511,6 @@ void resetLevelStateMemory()
 {
     g_activeSpawnerCount = 0;
 
-    // fill whole grid
     for (int row = 0; row < GRID_ROWS; ++row)
     {
         for (int col = 0; col < GRID_COLS; ++col)
@@ -515,12 +519,27 @@ void resetLevelStateMemory()
         }
     }
 
-    // clear interior
     for (int row = 1; row < GRID_ROWS - 1; ++row)
     {
         for (int col = 1; col < GRID_COLS - 1; ++col)
         {
-            g_gameState.tileMap[row][col] = EntityType::EMPTY_CELL; // 0xFFFF
+            g_gameState.tileMap[row][col] = EntityType::EMPTY_CELL;
+        }
+    }
+
+    for (int row = 0; row < GRID_ROWS; ++row)
+    {
+        for (int col = 0; col < GRID_COLS; ++col)
+        {
+            g_gameState.leftEntityMap[row][col]   = -1;
+            g_gameState.rightEntityMap[row][col]  = -1;
+            g_gameState.topEntityMap[row][col]    = -1;
+            g_gameState.bottomEntityMap[row][col] = -1;
+
+            g_gameState.entityToLeft[row][col] = -1;
+            g_gameState.entityToRight[row][col] = -1;
+            g_gameState.entityBelow[row][col] = -1;
+            g_gameState.entityAbove[row][col] = -1;
         }
     }
 
@@ -712,38 +731,38 @@ int postLoadLevel()
     return 0;
 }
 
-int replaceEntityIfTargetMatches(int index, int newRow, int newCol)
+int destroyEntityIfFallsIntoLava(int index, int newRow, int newCol)
 {
-    // EntityType targetIndex = g_gameState.tileMap[newRow][newCol];
+    int tile = (int)g_gameState.tileMap[newRow][newCol];
 
-    // if (targetIndex < 0)
-    //     return 0;
+    if (tile < 0)
+        return 0;
 
-    // EntityInfo& target = g_gameState.entities[targetIndex];
+    auto& target = g_gameState.entities[tile];
 
-    // if (target.entityType != EntityType(0x1F))
-    //     return 0;
+    if (target.entityType != EntityType::Lava)
+        return 0;
 
-    // EntityInfo& src = g_gameState.entities[index];
+    auto& src = g_gameState.entities[index];
 
-    // int oldRow = src.row;
-    // int oldCol = src.col;
+    int oldRow = src.row;
+    int oldCol = src.col;
 
-    // target.entityType = EntityType(0x20);
-    // target.state = 0;
+    target.entityType = EntityType::Lava2;
+    target.animFrame = 0;
 
-    // moveAndRedrawEntity(targetIndex, newRow, newCol);
+    moveAndRedrawEntity(tile, newRow, newCol);
 
-    // drawRectangleFromGrid(oldRow, oldCol);
+    drawRectangleFromGrid(oldRow, oldCol);
 
-    // markEntryInactive(index);
+    markEntryInactive(index);
 
     return 1;
 }
 
 void markEntryInactive(int index) {
     if (index >= 0 && index < MAX_CHANGES) {
-        g_gameState.entities[index].entityType = EntityType::EMPTY_CELL;
+        g_gameState.entities[index].entityType = EntityType::DESTROYED;
     }
 }
 
@@ -753,13 +772,11 @@ void finalizeLevelVisuals()
 
     while (i < g_activeSpawnerCount)
     {
-        EntityInfo& entity = g_gameState.entities[i];
-
-        if (entity.entityType == EntityType::EMPTY_CELL)
+        if (g_gameState.entities[i].entityType == EntityType::EMPTY_CELL)
         {
-            if (g_activeSpawnerCount > 1)
+            if (g_activeSpawnerCount >= 1)
             {
-                g_activeSpawnerCount--;
+                --g_activeSpawnerCount;
 
                 for (int j = i; j < g_activeSpawnerCount; ++j)
                 {
@@ -770,20 +787,21 @@ void finalizeLevelVisuals()
                 {
                     for (int col = 0; col < GRID_COLS; ++col)
                     {
-                        EntityType& tile = g_gameState.tileMap[row][col];
+                        auto& tile = g_gameState.tileMap[row][col];
+                        int value = static_cast<int>(tile);
 
-                        if (tile > (EntityType)i)
+                        if (value > i)
                         {
-                            tile = (EntityType)((int)tile - 1);
+                            tile = static_cast<EntityType>(value - 1);
                         }
                     }
                 }
+
+                continue;
             }
         }
-        else
-        {
-            i++;
-        }
+
+        ++i;
     }
 }
 
@@ -1054,10 +1072,8 @@ void runLegacyCallbackQueue()
         {
             if (entry.state == 0xFF)
                 continue;
-            cout << "alpha" << endl;
             if (entry.priority <= bestPriority)
             {
-                cout << "bravo" << endl;
                 bestPriority = entry.priority;
                 best = &entry;
             }
@@ -1065,11 +1081,8 @@ void runLegacyCallbackQueue()
 
         if (!best)
             return;
-        cout << "charly" << endl;
         uint8_t state = best->state;
         best->state = 0xFF;
-        cout << "delta" << endl;
-        cout << "callback addr = " << std::hex << best->callback << endl;
         if (!best->callback)
             return;
 
@@ -1108,28 +1121,25 @@ void handleMagnetVertical(int entityIndex)
     int row = s.entities[entityIndex].row;
     int col = s.entities[entityIndex].col;
 
-    // case 1
     if (s.leftEntityMap[row][col] == -1 &&
-        s.auxMap1282[row][col] == static_cast<int16_t>(EntityType::KYE_LOCATION))
+        s.entityToLeft[row][col] == (int16_t)0xFFFE)
     {
         moveAndRedrawEntity(entityIndex, row, col + 1);
         handleUnknownEntityType(entityIndex);
         return;
     }
 
-    // case 2
     if (s.rightEntityMap[row][col] == -1 &&
-        s.auxMap127A[row][col] == static_cast<int16_t>(EntityType::KYE_LOCATION))
+        s.entityToRight[row][col] == (int16_t)0xFFFE)
     {
         moveAndRedrawEntity(entityIndex, row, col - 1);
         handleUnknownEntityType(entityIndex);
         return;
     }
 
-    // case 3
     if (s.bottomEntityMap[row][col] == -1)
     {
-        int auxIndex = s.auxMap12CE[row][col];
+        int auxIndex = s.entityBelow[row][col];
 
         if (auxIndex >= 0 &&
             s.entities[auxIndex].entityType == EntityType::MagnetHorizontal)
@@ -1140,10 +1150,9 @@ void handleMagnetVertical(int entityIndex)
         }
     }
 
-    // case 4
     if (s.topEntityMap[row][col] == -1)
     {
-        int auxIndex = s.auxMap127A[row][col];
+        int auxIndex = s.entityAbove[row][col];
 
         if (auxIndex >= 0 &&
             s.entities[auxIndex].entityType == EntityType::MagnetHorizontal)
@@ -1166,7 +1175,7 @@ void handleMagnetHorizontal(int entityIndex)
 
     // case 1
     if (s.bottomEntityMap[row][col] == -1 &&
-        s.auxMap12CE[row][col] == static_cast<int16_t>(EntityType::KYE_LOCATION))
+        s.entityBelow[row][col] == static_cast<int16_t>(EntityType::KYE_LOCATION))
     {
         moveAndRedrawEntity(entityIndex, row + 1, col);
         handleUnknownEntityType(entityIndex);
@@ -1175,7 +1184,7 @@ void handleMagnetHorizontal(int entityIndex)
 
     // case 2
     if (s.topEntityMap[row][col] == -1 &&
-        s.auxMap12CE[row][col] == static_cast<int16_t>(EntityType::KYE_LOCATION))
+        s.entityBelow[row][col] == static_cast<int16_t>(EntityType::KYE_LOCATION))
     {
         moveAndRedrawEntity(entityIndex, row - 1, col);
         handleUnknownEntityType(entityIndex);
@@ -1185,7 +1194,7 @@ void handleMagnetHorizontal(int entityIndex)
     // case 3
     if (s.leftEntityMap[row][col] == -1)
     {
-        int auxIndex = s.auxMap1282[row][col];
+        int auxIndex = s.entityToLeft[row][col];
 
         if (auxIndex >= 0 &&
             s.entities[auxIndex].entityType == EntityType::MagnetVertical)
@@ -1199,7 +1208,7 @@ void handleMagnetHorizontal(int entityIndex)
     // case 4
     if (s.rightEntityMap[row][col] == -1)
     {
-        int auxIndex = s.auxMap127A[row][col];
+        int auxIndex = s.entityToRight[row][col];
 
         if (auxIndex >= 0 &&
             s.entities[auxIndex].entityType == EntityType::MagnetVertical)
@@ -1568,56 +1577,6 @@ void updateGridCell(int row, int col)
     {
         renderStaticObjects(row, col, (EntityType)tile);
     }
-}
-
-void renderStaticObjects(int row, int col, EntityType tileValue)
-{
-    if (!g_renderer || !g_sheetStatics.tex) {
-        cout << 'Missing resources renderFullWallLayerSdl' << endl;
-        return;
-    }
-    
-    // cout << "rendering (" << row << ";" << col << ") => " << (int)tileValue << endl;
-    SDL_FRect dstRect{
-        float(gridOriginX + col * cellWidth),
-        float(gridOriginY + row * cellHeight),
-        float(cellWidth),
-        float(cellHeight)
-    };
-
-    SDL_FRect srcRect{0.f, 0.f, 16.f, 16.f};
-    switch (tileValue)
-    {
-        case EntityType::BOTTOM_LEFT_ROUND_WALL: srcRect.x = 0x30; srcRect.y = 0x00; break;
-        case EntityType::BOTTOM_ROUNDED_WALL: srcRect.x = 0x40; srcRect.y = 0x00; break;
-        case EntityType::BOTTOM_RIGHT_ROUND_WALL: srcRect.x = 0x50; srcRect.y = 0x00; break;
-        case EntityType::LEFT_ROUNDED_WALL: srcRect.x = 0x60; srcRect.y = 0x00; break;
-        case EntityType::SQUARE_WALL: srcRect.x = 0x70; srcRect.y = 0x00; break;
-        case EntityType::RIGHT_ROUNDED_WALL: srcRect.x = 0x80; srcRect.y = 0x00; break;
-        case EntityType::TOP_LEFT_ROUNDED_WALL: srcRect.x = 0x90; srcRect.y = 0x00; break;
-        case EntityType::TOP_ROUNDED_WALL: srcRect.x = 0xA0; srcRect.y = 0x00; break;
-        case EntityType::TOP_RIGHT_ROUNDED_WALL: srcRect.x = 0xB0; srcRect.y = 0x00; break;
-        case EntityType::BREAKABLE_BRICK: srcRect.x = 0x00; srcRect.y = 0x00; break;
-        case EntityType::DIAMOND: srcRect.x = 0xC0; srcRect.y = 0x00; break;
-        case EntityType::ONE_WAY_LEFT_TO_RIGHT_PORTAL: srcRect.x = 0xE0; srcRect.y = 0x00; break;
-        case EntityType::ONE_WAY_RIGHT_TO_LEFT_PORTAL: srcRect.x = 0xE0; srcRect.y = 0x10; break;
-        case EntityType::ONE_WAY_TOP_TO_BOTTOM: srcRect.x = 0xD0; srcRect.y = 0x0; break;
-        case EntityType::ONE_WAY_BOTTOM_TO_TOP: srcRect.x = 0xD0; srcRect.y = 0x10; break;
-        default:
-        {
-            SDL_FRect r{
-                float(gridOriginX + col * cellWidth),
-                float(gridOriginY + row * cellHeight),
-                float(cellWidth),
-                float(cellHeight)
-            };
-
-            SDL_SetRenderDrawColor(g_renderer,255,255,255,255);
-            SDL_RenderFillRect(g_renderer,&r);
-            return;
-        }
-    }
-    SDL_RenderTexture(g_renderer, g_sheetStatics.tex, &srcRect, &dstRect);
 }
 
 void cancelPendingInteraction()
@@ -2283,7 +2242,7 @@ void handleDirectionalHotkeyAndAdvanceLevel(SDL_Keycode key)
 
     g_hasPendingModal = 1;
     tickLevelFlow();
-    updateLevelVisualsAndAnimations();
+    // updateLevelVisualsAndAnimations();
 }
 
 int showFinalDialog()
@@ -2325,7 +2284,6 @@ int showGameOverDialog()
 int tickLevelFlow()
 {
     g_timerActive = 0;
-
     initializeRendererIfNeeded();
 
     if (g_hasPendingModal != 0)
@@ -2345,9 +2303,7 @@ int tickLevelFlow()
             showLevelDoneDialog();
             levelIndex++;
         }
-
         loadLevelByIndex(levelIndex);
-
         showNewLevelDialog(g_windowHandle2);
 
         remainingDiamondCount = 0;
@@ -2364,17 +2320,11 @@ int tickLevelFlow()
         if (remainingLives < 0)
         {
             runTileSparkleEffect(2);
-
             drawRectangleFromGrid(currentRow, currentCol);
-
             showGameOverDialog();
-
             remainingDiamondCount = 0;
-
             loadLevelByIndex(levelIndex);
-
             clearStatusLine((const char*)0x29FA);
-
             invalidateWindow();
             updateWindow();
         }
@@ -2386,7 +2336,6 @@ int tickLevelFlow()
             }
         }
     }
-
     advanceToNextLevelOrBlock();
 
     g_timerActive = 1;
@@ -2778,7 +2727,7 @@ int processKyeCollision(int stepRow, int stepCol)
 
             if (targetEntity.entityType == EntityType::Lava)
             {
-                if (!replaceEntityIfTargetMatches(entityIndex, pushRow, pushCol))
+                if (!destroyEntityIfFallsIntoLava(entityIndex, pushRow, pushCol))
                 {
                     moveAndRedrawEntity(entityIndex, pushRow, pushCol);
                 }
@@ -2808,57 +2757,61 @@ void handleSmartEntityAlt(int entityIndex) {
 
 void handleArrowUp(int entityIndex)
 {
-    if (tryMoveMagnet(entityIndex) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (tryMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if (canEntityMoveMagnet(entityIndex) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // if (canEntityMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    const int newRow = pendingRow;
-    const int newCol = pendingCol;
+    // auto& e = g_gameState.entities[entityIndex];
 
-    const EntityType target = g_gameState.tileMap[newRow][newCol];
+    // int row = e.row;
+    // int col = e.col;
 
-    if (target == EntityType::EMPTY_CELL)
-    {
-        moveAndRedrawEntity(entityIndex, newRow, newCol - 1);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // int targetIndex = g_gameState.rightEntityMap[row][col];
 
-    if (replaceEntityIfTargetMatches(entityIndex, newRow, newCol - 1) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
+    // // --- case empty
+    // if (targetIndex == -1) // ou EMPTY_CELL selon ton mapping
+    // {
+    //     moveAndRedrawEntity(entityIndex, row, col - 1);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-    if ((int)target >= 0 && (int)target < g_activeSpawnerCount)
-    {
-        int targetIndex = (int)target;
-        EntityInfo& t = g_gameState.entities[targetIndex];
+    // // --- replace entity
+    // if (replaceEntityIfTargetMatches(entityIndex, row, col - 1) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
 
-        if (t.entityType == EntityType::DEFLECTOR_RIGHT)
-        {
-            g_gameState.entities[entityIndex].entityType = EntityType::ArrowRight;
-            handleUnknownEntityType(entityIndex);
-            return;
-        }
+    // // --- check entity type
+    // if (targetIndex >= 0 && targetIndex < g_activeSpawnerCount)
+    // {
+    //     EntityInfo& t = g_gameState.entities[targetIndex];
 
-        if (t.entityType == EntityType::DEFLECTOR_LEFT)
-        {
-            g_gameState.entities[entityIndex].entityType = EntityType::ArrowLeft;
-            handleUnknownEntityType(entityIndex);
-            return;
-        }
-    }
+    //     if (t.entityType == EntityType::DEFLECTOR_RIGHT)
+    //     {
+    //         e.entityType = EntityType::ArrowRight;
+    //         handleUnknownEntityType(entityIndex);
+    //         return;
+    //     }
 
-    handleUnknownEntityType(entityIndex);
+    //     if (t.entityType == EntityType::DEFLECTOR_LEFT)
+    //     {
+    //         e.entityType = EntityType::ArrowLeft;
+    //         handleUnknownEntityType(entityIndex);
+    //         return;
+    //     }
+    // }
+
+    // handleUnknownEntityType(entityIndex);
 }
 
 void handleArrowDown(int entityIndex)
@@ -3038,71 +2991,87 @@ void handleUnknownEntityType(int entityIndex) {}
 
 void handlePusherLeft(int entityIndex)
 {
-    auto& state = g_gameState;
+    auto& s = g_gameState;
 
     if ((frameCounter % 5) != 0)
     {
         handleUnknownEntityType(entityIndex);
         return;
     }
+
     if (tryMoveMagnet(entityIndex) != 0)
     {
         handleUnknownEntityType(entityIndex);
         return;
     }
+
     if (canEntityMoveMagnet(entityIndex) != 0)
     {
         handleUnknownEntityType(entityIndex);
         return;
     }
-    int newRow = state.entities[entityIndex].row;
-    int newCol = state.entities[entityIndex].col;
-    int topIndex = state.topEntityMap[newRow][newCol];
 
-    if (topIndex == -1)
-    {
-        moveAndRedrawEntity(entityIndex, newRow - 1, newCol);
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
-    if (replaceEntityIfTargetMatches(entityIndex, newRow - 1, newCol) != 0)
-    {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
-    state.entities[entityIndex].entityType = EntityType::PUSHER_RIGHT;
+    int row = s.entities[entityIndex].row;
+    int col = s.entities[entityIndex].col;
 
-    moveAndRedrawEntity(entityIndex, newRow, newCol);
-    topIndex = state.topEntityMap[newRow][newCol];
+    int left = s.leftEntityMap[row][col];
 
-    if (topIndex < 0)
+    if (left == -1)
     {
+        if (s.tileMap[row][col - 1] != EntityType::EMPTY_CELL)
+        {
+            s.entities[entityIndex].entityType = EntityType::PUSHER_RIGHT;
+            moveAndRedrawEntity(entityIndex, row, col);
+            handleUnknownEntityType(entityIndex);
+            return;
+        }
+
+        moveAndRedrawEntity(entityIndex, row, col - 1);
         handleUnknownEntityType(entityIndex);
         return;
     }
 
-    auto& target = state.entities[topIndex];
-
-    int targetRow = target.row - 1;
-    int targetCol = target.col;
-    int auxIndex = state.rightEntityMap[targetRow][targetCol];
-
-    if (auxIndex != -1)
+    if (destroyEntityIfFallsIntoLava(entityIndex, row, col - 1) != 0)
     {
-        EntityType auxAction = state.entities[auxIndex].entityType;
+        handleUnknownEntityType(entityIndex);
+        return;
+    }
 
-        if (auxAction != EntityType::Lava)
+    s.entities[entityIndex].entityType = EntityType::PUSHER_RIGHT;
+    moveAndRedrawEntity(entityIndex, row, col);
+
+    left = s.leftEntityMap[row][col];
+
+    if (left < 0)
+    {
+        handleUnknownEntityType(entityIndex);
+        return;
+    }
+
+    auto& target = s.entities[left];
+
+    int targetRow = target.row;
+    int targetCol = target.col - 1;
+
+    EntityType tile = s.tileMap[targetRow][targetCol];
+
+    if (tile != EntityType::EMPTY_CELL)
+    {
+        if ((int)tile < 0 ||
+            s.entities[(int)tile].entityType != EntityType::Lava)
         {
             handleUnknownEntityType(entityIndex);
             return;
         }
     }
-    if (replaceEntityIfTargetMatches(topIndex, targetRow, targetCol) != 0)
+
+    if (destroyEntityIfFallsIntoLava(left, targetRow, targetCol) != 0)
     {
         handleUnknownEntityType(entityIndex);
         return;
     }
-    moveAndRedrawEntity(topIndex, targetRow, targetCol);
+
+    moveAndRedrawEntity(left, targetRow, targetCol);
 
     handleUnknownEntityType(entityIndex);
 }
@@ -3234,7 +3203,7 @@ void handlePusherDown(int entityIndex)
         return;
     }
 
-    if (replaceEntityIfTargetMatches(entityIndex, newRow, newCol + 1) != 0)
+    if (destroyEntityIfFallsIntoLava(entityIndex, newRow, newCol + 1) != 0)
     {
         handleUnknownEntityType(entityIndex);
         return;
@@ -3270,7 +3239,7 @@ void handlePusherDown(int entityIndex)
         }
     }
 
-    if (replaceEntityIfTargetMatches(rightIndex, targetRow, targetCol) != 0)
+    if (destroyEntityIfFallsIntoLava(rightIndex, targetRow, targetCol) != 0)
     {
         handleUnknownEntityType(entityIndex);
         return;
@@ -3283,7 +3252,7 @@ void handlePusherDown(int entityIndex)
 
 void handlePusherRight(int entityIndex)
 {
-    auto& state = g_gameState;
+    auto& s = g_gameState;
 
     if ((frameCounter % 5) != 0)
     {
@@ -3303,61 +3272,72 @@ void handlePusherRight(int entityIndex)
         return;
     }
 
-    int newRow = state.entities[entityIndex].row;
-    int newCol = state.entities[entityIndex].col;
+    int row = s.entities[entityIndex].row;
+    int col = s.entities[entityIndex].col;
 
-    int bottomIndex = state.bottomEntityMap[newRow][newCol];
+    int right = s.rightEntityMap[row][col];
 
-    if (bottomIndex == -1)
+    if (right == -1)
     {
-        moveAndRedrawEntity(entityIndex, newRow + 1, newCol);
+        if (s.tileMap[row][col + 1] != EntityType::EMPTY_CELL)
+        {
+            s.entities[entityIndex].entityType = EntityType::PUSHER_LEFT;
+            moveAndRedrawEntity(entityIndex, row, col);
+
+            right = s.rightEntityMap[row][col];
+            if (right >= 0)
+            {
+                int targetRow = s.entities[right].row;
+                int targetCol = s.entities[right].col + 1;
+                EntityType tile = s.tileMap[targetRow][targetCol];
+
+                if (tile == EntityType::EMPTY_CELL ||
+                    ((int)tile >= 0 && s.entities[(int)tile].entityType == EntityType::Lava))
+                {
+                    if (destroyEntityIfFallsIntoLava(right, targetRow, targetCol) == 0)
+                    {
+                        moveAndRedrawEntity(right, targetRow, targetCol);
+                    }
+                }
+            }
+
+            handleUnknownEntityType(entityIndex);
+            return;
+        }
+        moveAndRedrawEntity(entityIndex, row, col + 1);
         handleUnknownEntityType(entityIndex);
         return;
     }
 
-    if (replaceEntityIfTargetMatches(entityIndex, newRow + 1, newCol) != 0)
+    if (destroyEntityIfFallsIntoLava(entityIndex, row, col + 1) != 0)
     {
         handleUnknownEntityType(entityIndex);
         return;
     }
 
-    state.entities[entityIndex].entityType = EntityType::PUSHER_LEFT;
+    s.entities[entityIndex].entityType = EntityType::PUSHER_LEFT;
+    moveAndRedrawEntity(entityIndex, row, col);
 
-    moveAndRedrawEntity(entityIndex, newRow, newCol);
+    int targetRow = s.entities[right].row;
+    int targetCol = s.entities[right].col + 1;
+    EntityType tile = s.tileMap[targetRow][targetCol];
 
-    bottomIndex = state.bottomEntityMap[newRow][newCol];
-
-    if (bottomIndex < 0)
+    if (tile != EntityType::EMPTY_CELL)
     {
-        handleUnknownEntityType(entityIndex);
-        return;
-    }
-
-    auto& target = state.entities[bottomIndex];
-
-    int targetRow = target.row + 1;
-    int targetCol = target.col;
-
-    int auxIndex = state.rightEntityMap[targetRow][targetCol];
-
-    if (auxIndex != -1)
-    {
-        EntityType auxAction = state.entities[auxIndex].entityType;
-
-        if (auxAction != EntityType::Lava)
+        if ((int)tile < 0 || s.entities[(int)tile].entityType != EntityType::Lava)
         {
             handleUnknownEntityType(entityIndex);
             return;
         }
     }
 
-    if (replaceEntityIfTargetMatches(bottomIndex, targetRow, targetCol) != 0)
+    if (destroyEntityIfFallsIntoLava(right, targetRow, targetCol) != 0)
     {
         handleUnknownEntityType(entityIndex);
         return;
     }
 
-    moveAndRedrawEntity(bottomIndex, targetRow, targetCol);
+    moveAndRedrawEntity(right, targetRow, targetCol);
 
     handleUnknownEntityType(entityIndex);
 }
@@ -3787,74 +3767,93 @@ void handleCurvedArrowRight(int entityIndex)
     // handleUnknownEntityType(entityIndex);
 }
 
-void handleMonsterEntityType(int entityIndex)
+int randomInt(int min, int max)
 {
-    // if (checkAndHandleDeathCondition(entityIndex) != 0)
-    //     return;
-
-    // if ((frameCounter % 3) != 0)
-    //     return;
-
-    // int rowOffset = 0;
-    // int colOffset = 0;
-
-    // if (tryMoveMagnet(entityIndex) != 0)
-    //     return;
-
-    // if (canEntityMoveMagnet(entityIndex) == 0)
-    // {
-    //     pseudoRandomUpdate(0x00008000u);
-    //     if ((randomSeedLow & 1u) != 0u)
-    //     {
-    //         adjustSmartEntityTarget(
-    //             entityIndex,
-    //             srcRow,
-    //             srcCol,
-    //             &pendingRow,
-    //             &pendingCol
-    //         );
-    //     }
-    //     else
-    //     {
-    //         // --- random branch 2 ---
-    //         pseudoRandomUpdate(0x00008000u);
-
-    //         bool axisRow = (randomSeedLow & 1u) != 0u;
-
-    //         pseudoRandomUpdate(0x00008000u);
-
-    //         int offset = (randomSeedLow % 3) - 1; // -1,0,+1
-
-    //         if (axisRow)
-    //             rowOffset = offset;
-    //         else
-    //             colOffset = offset;
-    //     }
-    // }
-
-    // int newRow = pendingRow + rowOffset;
-    // int newCol = pendingCol + colOffset;
-
-    // EntityType cell = g_gameState.tileMap[newRow][newCol];
-
-    // bool cellFree =
-    //     (cell == EntityType::EMPTY_CELL) ||
-    //     (cell >= EntityType::EMPTY_CELL &&
-    //      g_gameState.entities[cell].entityType == EntityType::Lava);
-
-    // if (cellFree)
-    // {
-    //     pendingRow = newRow;
-    //     pendingCol = newCol;
-    // }
-
-    // if (replaceEntityIfTargetMatches(entityIndex, pendingRow, pendingCol))
-    //     return;
-
-    // moveAndRedrawEntity(entityIndex, pendingRow, pendingCol);
+    static std::mt19937 rng(std::random_device{}());
+    std::uniform_int_distribution<int> dist(min, max);
+    return dist(rng);
 }
 
-static constexpr std::array<EntityHandler, 56> ENTITY_HANDLERS = {{
+void handleMonsterEntityType(int entityIndex)
+{
+    // auto& s = g_gameState;
+
+    // if (checkAndHandleDeathCondition(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
+
+    // if ((frameCounter % 3) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
+
+    // if (tryMoveMagnet(entityIndex) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
+
+    // if (canEntityMoveMagnet(entityIndex) != 0)
+    // {
+    //     int row = s.entities[entityIndex].row;
+    //     int col = s.entities[entityIndex].col;
+
+    //     if (destroyEntityIfFallsIntoLava(entityIndex, row, col) != 0)
+    //     {
+    //         handleUnknownEntityType(entityIndex);
+    //         return;
+    //     }
+
+    //     moveAndRedrawEntity(entityIndex, row, col);
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
+
+    // int newRow = s.entities[entityIndex].row;
+    // int newCol = s.entities[entityIndex].col;
+
+    // if (randomInt(0, 1) == 1)
+    // {
+    //     adjustSmartEntityTarget(entityIndex, currentRow, currentCol, &newRow, &newCol);
+    // }
+    // else
+    // {
+    //     int dx = randomInt(-1, 1);
+    //     int dy = randomInt(-1, 1);
+
+    //     int tryRow = newRow + dy;
+    //     int tryCol = newCol + dx;
+
+    //     if (tryRow >= 0 && tryRow < GRID_ROWS &&
+    //         tryCol >= 0 && tryCol < GRID_COLS)
+    //     {
+    //         int tile = (int)s.tileMap[tryRow][tryCol];
+
+    //         if (tile == (int)EntityType::EMPTY_CELL ||
+    //             (tile >= 0 && tile < 256 &&
+    //              s.entities[tile].entityType == EntityType::Lava))
+    //         {
+    //             newRow = tryRow;
+    //             newCol = tryCol;
+    //         }
+    //     }
+    // }
+
+    // if (destroyEntityIfFallsIntoLava(entityIndex, newRow, newCol) != 0)
+    // {
+    //     handleUnknownEntityType(entityIndex);
+    //     return;
+    // }
+
+    // moveAndRedrawEntity(entityIndex, newRow, newCol);
+
+    // handleUnknownEntityType(entityIndex);
+}
+
+static constexpr std::array<EntityHandler, 60> ENTITY_HANDLERS = {{
     handleSmartEntityCommon,   // 0
     handleArrowUp,            // 1
     handleArrowDown,           // 2
@@ -3902,25 +3901,38 @@ static constexpr std::array<EntityHandler, 56> ENTITY_HANDLERS = {{
     handleSmartEntityAlt,      // 44
     handleSmartEntityAlt,      // 45
     handleSmartEntityAlt,      // 46
-    handleSmartEntityAlt       // 47
+    handleSmartEntityAlt,       // 47
+    handleUnknownEntityType,    // 48
+    handleUnknownEntityType,    // 49
+    handleUnknownEntityType,    // 50
+    handleUnknownEntityType,    // 51
+    handleUnknownEntityType,    // 52
+    handleUnknownEntityType,    // 53
+    handleUnknownEntityType,    // 54
+    handleUnknownEntityType,    // 55
+    handleUnknownEntityType,    // 56
+    handleUnknownEntityType,    // 57
+    handleUnknownEntityType,    // 58
+    handleUnknownEntityType     // 59
 }};
 
 void gameMainLoopTick()
 {
     ++frameCounter;
 
-    if (frameCounter > 0x7D00)
+    if (frameCounter > 0x7D00) {
         frameCounter = 0;
-
-    updateLevelEntitiesEvery30Frames();
+    }
+    updateCountdownEntities();
 
     int entityIndex = 0;
 
     while (entityIndex < g_activeSpawnerCount)
     {
         EntityType entityType = g_gameState.entities[entityIndex].entityType;
+        int type = (int)entityType;
 
-        if (entityType <= EntityType::COUNTDOWN)
+        if (entityType <= EntityType::COUNTDOWN_9)
         {
             ENTITY_HANDLERS[(int)entityType](entityIndex);
         }

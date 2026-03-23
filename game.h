@@ -66,6 +66,7 @@ enum class EntityType : std::uint16_t
     EMPTY = 00000,
     // --- Empty / Player
     EMPTY_CELL = 0xFFFF,
+    DESTROYED = 0x00FF,
 
     // --- Walls
     BOTTOM_LEFT_ROUND_WALL = 0xFFFD,
@@ -128,13 +129,16 @@ enum class EntityType : std::uint16_t
     Lava = 0x001F,
     Lava2 = 0x0020,
 
-    COUNTDOWN = 0x003B,
-    UnknownX = 0x003A,
-    UnknownY = 0x0039,
-    UnknownZ = 0x0038,
-    UnknownLeftBrace = 0x0037,
-    UnknownPipe = 0x0036,
-    UNKNOWN = 0x0032,
+    COUNTDOWN_9 = 0x003B,
+    COUNTDOWN_8 = 0x003A,
+    COUNTDOWN_7 = 0x0039,
+    COUNTDOWN_6 = 0x0038,
+    COUNTDOWN_5 = 0x0037,
+    COUNTDOWN_4 = 0x0036,
+    COUNTDOWN_3 = 0x0035,
+    COUNTDOWN_2 = 0x0034,
+    COUNTDOWN_1 = 0x0033,
+    COUNTDOWN_0 = 0x0032,
     KYE_LOCATION = 0xFFFE, 
 };
 
@@ -161,9 +165,10 @@ public:
     int16_t bottomEntityMap[GRID_ROWS][GRID_COLS]; // 12A6
     int16_t auxTopRightEntityMap[GRID_ROWS][GRID_COLS]; // 12A4
     int16_t auxBottomRightEntityMap[GRID_ROWS][GRID_COLS]; // 12A8
-    int16_t auxMap1282[GRID_ROWS][GRID_COLS];
-    int16_t auxMap127A[GRID_ROWS][GRID_COLS];
-    int16_t auxMap12CE[GRID_ROWS][GRID_COLS];
+    int16_t entityToLeft[GRID_ROWS][GRID_COLS]; // 1282
+    int16_t entityToRight[GRID_ROWS][GRID_COLS]; // 127A
+    int16_t entityBelow[GRID_ROWS][GRID_COLS]; // 12CE
+    int16_t entityAbove[GRID_ROWS][GRID_COLS]; // 122E
 
     std::vector<int> bottomLeftEntityTable;
 
@@ -194,7 +199,7 @@ struct EntityMappingEntry {
 };
 
 // 02C0
-constexpr std::array<EntityMappingEntry, 56> ENTITY_MAPPINGS = {{
+constexpr std::array<EntityMappingEntry, 60> ENTITY_MAPPINGS = {{
 
     { EntityClass::Empty,  0x00, EntityType::EMPTY_CELL, ' ' },
     { EntityClass::Player, 0x00, EntityType::EMPTY_CELL, 'K' },
@@ -259,12 +264,16 @@ constexpr std::array<EntityMappingEntry, 56> ENTITY_MAPPINGS = {{
     { EntityClass::Mobile, 0x00, EntityType::Lava, 'H' },
     { EntityClass::Mobile, 0x00, EntityType::Lava2, 'H' },
 
-    { EntityClass::Mobile, 0x00, EntityType::COUNTDOWN, 'w' },
-    { EntityClass::Mobile, 0x00, EntityType::UnknownX, 'x' },
-    { EntityClass::Mobile, 0x00, EntityType::UnknownY, 'y' },
-    { EntityClass::Mobile, 0x00, EntityType::UnknownZ, 'z' },
-    { EntityClass::Mobile, 0x00, EntityType::UnknownLeftBrace, '{' },
-    { EntityClass::Mobile, 0x00, EntityType::UnknownPipe, '|' }
+    { EntityClass::Mobile, 0x00, EntityType::COUNTDOWN_9, 'w' },
+    { EntityClass::Mobile, 0x00, EntityType::COUNTDOWN_8, 'x' },
+    { EntityClass::Mobile, 0x00, EntityType::COUNTDOWN_7, 'y' },
+    { EntityClass::Mobile, 0x00, EntityType::COUNTDOWN_6, 'z' },
+    { EntityClass::Mobile, 0x00, EntityType::COUNTDOWN_5, '{' },
+    { EntityClass::Mobile, 0x00, EntityType::COUNTDOWN_4, '|' },
+    { EntityClass::Mobile, 0x00, EntityType::COUNTDOWN_3, '}' },
+    { EntityClass::Mobile, 0x00, EntityType::COUNTDOWN_2, '}' },
+    { EntityClass::Mobile, 0x00, EntityType::COUNTDOWN_1, '}' },
+    { EntityClass::Mobile, 0x00, EntityType::COUNTDOWN_0, '}' }
 }};
 
 // =====================
@@ -499,7 +508,6 @@ int executeCurrentEntryAction(int16_t actionType,
                               int16_t col);
 int handleStandardCellClick(int row,int col);
 void handleSpecialSentinelClick();
-void renderStaticObjects(int row, int col, EntityType tileValue);
 void spawnAtIfEmpty(int targetRow, int targetCol, EntityType type, uint16_t& spawnDelayCounter);
 void animateMonsters();
 void invalidateWindow();

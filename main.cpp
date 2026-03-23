@@ -75,7 +75,6 @@ int main(int argc, char** argv)
         if (now - lastTick >= 100)
         {
             lastTick = now;
-
             tickLevelFlow();
             handlePaintOrRenderRequest();
             updateLevelVisualsAndAnimations();

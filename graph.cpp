@@ -117,19 +117,6 @@ void showMessage(const char* caption, const char* message)
 void drawRectangleFromGrid(int row, int col)
 {
     g_gameState.tileMap[row][col] = EntityType::EMPTY_CELL;
-
-    const int x0 = gridOriginX + col * cellWidth;
-    const int y0 = gridOriginY + row * cellHeight;
-
-    SDL_FRect r{
-        (float)x0,
-        (float)y0,
-        (float)cellWidth,
-        (float)cellHeight
-    };
-
-    SDL_SetRenderDrawColor(g_renderer, 255,255,255,255); // blanc
-    SDL_RenderFillRect(g_renderer, &r);
 }
 
 static const char* getLegacyString(uint16_t offset) {
@@ -347,6 +334,10 @@ void initializeLayoutRects() {
 
 void renderEntity(int entityIndex)
 {
+    if (entityIndex >= g_activeSpawnerCount)
+    {
+        return;
+    }
     if (entityIndex < 0 ||
         entityIndex >= static_cast<int16_t>(g_gameState.entities.size()) ||
         g_sheetMobiles.tex == nullptr)
@@ -357,7 +348,7 @@ void renderEntity(int entityIndex)
     const EntityInfo& entity =
         g_gameState.entities[entityIndex];
 
-    const int type = static_cast<int>(entity.entityType);
+    const EntityType type = entity.entityType;
 
     SDL_FRect dstRect{
         static_cast<float>(gridOriginX + entity.col * cellWidth),
@@ -369,20 +360,20 @@ void renderEntity(int entityIndex)
     float srcX = 0;
     float srcY = 0;
 
-    if (type >= 0x0F && type <= 0x13)
+    if (type >= EntityType::EnemyPropeller && type <= EntityType::EnemyPropellerRound)
     {
-        srcX = static_cast<float>(type * 0x10);
-        // srcY = static_cast<float>(type * 16);
+        srcX = static_cast<float>(type) * 0x10;
          srcY = 16.0f;
     }
-    else if (type >= 0x32 && type <= 0x3B)
+    else if (type >= EntityType::COUNTDOWN_0 && type <= EntityType::COUNTDOWN_9)
     {
-        srcX = static_cast<float>(type * 0x10);
+        int index = (int)type - (int)EntityType::COUNTDOWN_0;
+        srcX = index * 16.0f; 
         srcY = 16.0f;
     }
     else
     {
-        srcX = static_cast<float>(type * 0x10);
+        srcX = static_cast<float>(type) * 0x10;
         srcY = 0.0f;
     }
 
@@ -513,6 +504,8 @@ void renderAllEntities()
 {
     for (int i = 0; i < g_activeSpawnerCount ; ++i)
     {
+        if (i < 0 || i >= g_activeSpawnerCount)
+            continue;
         renderEntity(i);
     }
 }
@@ -523,7 +516,6 @@ void renderAllObjects()
     {
         renderFullWallLayer();
         renderAllEntities();
-
         if (g_levelJustLoadedFlag)
         {
             g_levelJustLoadedFlag = 0;
@@ -550,9 +542,7 @@ void renderAllObjects()
 int renderHudAndFrame()
 {
     renderAllObjects();
-
     SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
-
     SDL_RenderLine(
         g_renderer,
         (float)baseX,
@@ -560,7 +550,6 @@ int renderHudAndFrame()
         (float)uiRightX,
         (float)(uiTopY - 1)
     );
-
     SDL_RenderLine(
         g_renderer,
         (float)(rightEdge3 + 1),
@@ -568,7 +557,6 @@ int renderHudAndFrame()
         (float)(rightEdge3 + 1),
         (float)(uiBottomLineY + 2)
     );
-
     renderLivesAndLevelInfo();
     // drawTextAt(
     //     (int16_t)(g_invalidateRectPx.x + 4),
@@ -581,74 +569,6 @@ int renderHudAndFrame()
 
 static inline void setDrawColorPenBlack() { SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255); }
 static inline void setDrawColorPenGray()  { SDL_SetRenderDrawColor(g_renderer, 128, 128, 128, 255); }
-
-// void renderHudAndFrame()
-// {
-//     Uint8 oldR, oldG, oldB, oldA;
-//     SDL_GetRenderDrawColor(g_renderer, &oldR, &oldG, &oldB, &oldA);
-//     SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
-//     SDL_RenderLine(
-//         g_renderer,
-//         (float)baseX, (float)(uiTopY - 1),
-//         (float)uiRightX, (float)(uiTopY - 1)
-//     );
-//     SDL_RenderLine(
-//         g_renderer,
-//         (float)(rightEdge3 + 1), (float)baseY,
-//         (float)(rightEdge3 + 1), (float)(uiBottomLineY + 2)
-//     );
-//     renderLivesAndLevelInfo();
-//     SDL_SetRenderDrawColor(g_renderer, 255, 255, 255, 255);
-//     SDL_FRect hudRect{
-//         (float)uiLeftX,
-//         (float)uiTopY,
-//         (float)(uiRightX - uiLeftX),
-//         (float)(uiBottomY - uiTopY)
-//     };
-//     SDL_RenderRect(g_renderer, &hudRect);
-//     SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
-//     const char* hudText = hudMessageText;
-//     const int hudLen = (int)SDL_strlen(hudText);
-//     drawTextAt((int16_t)(uiLeftX + 4), (int16_t)uiTopY, hudText, hudLen);
-//     SDL_SetRenderDrawColor(g_renderer, oldR, oldG, oldB, oldA);
-//     renderAllObjects();
-// }
-
-// void drawTextAt(int16_t x, int16_t y, const char* text, int length)
-// {
-//     if (!g_renderer || !g_font || !text || length <= 0)
-//         return;
-
-//     std::string str(text, length);
-
-//     SDL_Color color{0,0,0,255};
-
-//     SDL_Surface* surface = TTF_RenderText_Blended(
-//         g_font,
-//         str.c_str(),
-//         str.length(),
-//         color
-//     );
-//     if (!surface)
-//         return;
-
-//     SDL_Texture* tex = SDL_CreateTextureFromSurface(g_renderer, surface);
-//     SDL_DestroySurface(surface);
-
-//     if (!tex)
-//         return;
-
-//     SDL_FRect dst{
-//         static_cast<float>(x),
-//         static_cast<float>(y),
-//         static_cast<float>(surface->w),
-//         static_cast<float>(surface->h)
-//     };
-
-//     SDL_RenderTexture(g_renderer, tex, nullptr, &dst);
-
-//     SDL_DestroyTexture(tex);
-// }
 
 void drawTextAt(int16_t x, int16_t y, const char* text, int length)
 {
@@ -1273,4 +1193,54 @@ SDL_Texture* loadTexture(SDL_Renderer* renderer, const char* path)
     SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surf);
     SDL_DestroySurface(surf);
     return tex;
+}
+
+void renderStaticObjects(int row, int col, EntityType tileValue)
+{
+    if (!g_renderer || !g_sheetStatics.tex) {
+        cout << 'Missing resources renderFullWallLayerSdl' << endl;
+        return;
+    }
+    
+    // cout << "rendering (" << row << ";" << col << ") => " << (int)tileValue << endl;
+    SDL_FRect dstRect{
+        float(gridOriginX + col * cellWidth),
+        float(gridOriginY + row * cellHeight),
+        float(cellWidth),
+        float(cellHeight)
+    };
+
+    SDL_FRect srcRect{0.f, 0.f, 16.f, 16.f};
+    switch (tileValue)
+    {
+        case EntityType::BOTTOM_LEFT_ROUND_WALL: srcRect.x = 0x30; srcRect.y = 0x00; break;
+        case EntityType::BOTTOM_ROUNDED_WALL: srcRect.x = 0x40; srcRect.y = 0x00; break;
+        case EntityType::BOTTOM_RIGHT_ROUND_WALL: srcRect.x = 0x50; srcRect.y = 0x00; break;
+        case EntityType::LEFT_ROUNDED_WALL: srcRect.x = 0x60; srcRect.y = 0x00; break;
+        case EntityType::SQUARE_WALL: srcRect.x = 0x70; srcRect.y = 0x00; break;
+        case EntityType::RIGHT_ROUNDED_WALL: srcRect.x = 0x80; srcRect.y = 0x00; break;
+        case EntityType::TOP_LEFT_ROUNDED_WALL: srcRect.x = 0x90; srcRect.y = 0x00; break;
+        case EntityType::TOP_ROUNDED_WALL: srcRect.x = 0xA0; srcRect.y = 0x00; break;
+        case EntityType::TOP_RIGHT_ROUNDED_WALL: srcRect.x = 0xB0; srcRect.y = 0x00; break;
+        case EntityType::BREAKABLE_BRICK: srcRect.x = 0x00; srcRect.y = 0x00; break;
+        case EntityType::DIAMOND: srcRect.x = 0xC0; srcRect.y = 0x00; break;
+        case EntityType::ONE_WAY_LEFT_TO_RIGHT_PORTAL: srcRect.x = 0xE0; srcRect.y = 0x00; break;
+        case EntityType::ONE_WAY_RIGHT_TO_LEFT_PORTAL: srcRect.x = 0xE0; srcRect.y = 0x10; break;
+        case EntityType::ONE_WAY_TOP_TO_BOTTOM: srcRect.x = 0xD0; srcRect.y = 0x0; break;
+        case EntityType::ONE_WAY_BOTTOM_TO_TOP: srcRect.x = 0xD0; srcRect.y = 0x10; break;
+        default:
+        {
+            SDL_FRect r{
+                float(gridOriginX + col * cellWidth),
+                float(gridOriginY + row * cellHeight),
+                float(cellWidth),
+                float(cellHeight)
+            };
+
+            SDL_SetRenderDrawColor(g_renderer,255,255,255,255);
+            SDL_RenderFillRect(g_renderer,&r);
+            return;
+        }
+    }
+    SDL_RenderTexture(g_renderer, g_sheetStatics.tex, &srcRect, &dstRect);
 }
