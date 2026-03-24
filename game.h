@@ -16,6 +16,7 @@
 #include <SDL3/SDL.h>
 #include <unordered_map>
 #include <iostream>
+#include <random>
 
 #include "file.h"
 
@@ -87,11 +88,11 @@ enum class EntityType : std::uint16_t
     ONE_WAY_BOTTOM_TO_TOP = 0xFFEF,
 
     // --- Mobiles
-    PushableBrick = 0x0000,
-    ARROW_UP = 0x0001,
-    ARROW_DOWN = 0x0002,
-    ArrowLeft = 0x0003,
-    ArrowRight = 0x0004,
+    PUSHABLE_BRICK = 0x0000,
+    SQUARE_ARROW_UP = 0x0001,
+    SQUARE_ARROW_DOWN = 0x0002,
+    SQUARE_ARROW_LEFT = 0x0003,
+    SQUARE_ARROW_RIGHT = 0x0004,
 
     MagnetVertical = 0x0005,
     MagnetHorizontal = 0x0006,
@@ -114,7 +115,7 @@ enum class EntityType : std::uint16_t
 
     DEFLECTOR_LEFT = 0x0014,
     DEFLECTOR_RIGHT = 0x0015,
-    RoundedPushableBrick = 0x0016,
+    ROUNDED_PUSHABLE_BRICK = 0x0016,
 
     UnknownA1 = 0x0017,
     UnknownA2 = 0x0018,
@@ -140,6 +141,21 @@ enum class EntityType : std::uint16_t
     COUNTDOWN_1 = 0x0033,
     COUNTDOWN_0 = 0x0032,
     KYE_LOCATION = 0xFFFE, 
+};
+
+struct DeterministicRNG
+{
+    static std::mt19937& get()
+    {
+        static std::mt19937 rng(1337);
+        return rng;
+    }
+
+    static int next(int min, int max)
+    {
+        std::uniform_int_distribution<int> dist(min, max);
+        return dist(get());
+    }
 };
 
 struct EntityInfo {
@@ -222,11 +238,11 @@ constexpr std::array<EntityMappingEntry, 60> ENTITY_MAPPINGS = {{
     { EntityClass::Fixed, 0x00, EntityType::ONE_WAY_TOP_TO_BOTTOM, 'h' },
     { EntityClass::Fixed, 0x00, EntityType::ONE_WAY_BOTTOM_TO_TOP, 'i' },
 
-    { EntityClass::Mobile, 0x00, EntityType::PushableBrick, 'b' },
-    { EntityClass::Mobile, 0x00, EntityType::ARROW_UP, 'u' },
-    { EntityClass::Mobile, 0x00, EntityType::ARROW_DOWN, 'd' },
-    { EntityClass::Mobile, 0x00, EntityType::ArrowLeft, 'l' },
-    { EntityClass::Mobile, 0x00, EntityType::ArrowRight, 'r' },
+    { EntityClass::Mobile, 0x00, EntityType::PUSHABLE_BRICK, 'b' },
+    { EntityClass::Mobile, 0x00, EntityType::SQUARE_ARROW_UP, 'u' },
+    { EntityClass::Mobile, 0x00, EntityType::SQUARE_ARROW_DOWN, 'd' },
+    { EntityClass::Mobile, 0x00, EntityType::SQUARE_ARROW_LEFT, 'l' },
+    { EntityClass::Mobile, 0x00, EntityType::SQUARE_ARROW_RIGHT, 'r' },
 
     { EntityClass::Mobile, 0x00, EntityType::MagnetVertical, 's' },
     { EntityClass::Mobile, 0x00, EntityType::MagnetHorizontal, 'S' },
@@ -249,7 +265,7 @@ constexpr std::array<EntityMappingEntry, 60> ENTITY_MAPPINGS = {{
 
     { EntityClass::Mobile, 0x00, EntityType::DEFLECTOR_LEFT, 'a' },
     { EntityClass::Mobile, 0x00, EntityType::DEFLECTOR_RIGHT, 'c' },
-    { EntityClass::Mobile, 0x00, EntityType::RoundedPushableBrick, 'B' },
+    { EntityClass::Mobile, 0x00, EntityType::ROUNDED_PUSHABLE_BRICK, 'B' },
 
     { EntityClass::Mobile, 0x00, EntityType::UnknownA1, 'A' },
     { EntityClass::Mobile, 0x00, EntityType::UnknownA2, 'A' },

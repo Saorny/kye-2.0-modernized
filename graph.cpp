@@ -1202,7 +1202,6 @@ void renderStaticObjects(int row, int col, EntityType tileValue)
         return;
     }
     
-    // cout << "rendering (" << row << ";" << col << ") => " << (int)tileValue << endl;
     SDL_FRect dstRect{
         float(gridOriginX + col * cellWidth),
         float(gridOriginY + row * cellHeight),
