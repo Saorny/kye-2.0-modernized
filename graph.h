@@ -42,7 +42,7 @@ extern bool g_isRendering;
 void showMessage(const char* caption, const char* message);
 int isPointInRect(int x, int y);
 void maybeDrawPendingRectangle();
-void drawPendingBlock();
+void drawPendingKyeMarker();
 void drawRectangleFromGrid(int row, int col);
 void initializeWindowSize();
 
@@ -81,8 +81,7 @@ int initializeGameWindow(
     int cmdShow,
     uint16_t titleSegment,
     uint16_t titleOffset,
-    int skipRegisterClassFlag,
-    void* hInstance
+    int skipRegisterClassFlag
 );
 void drawWhatDialogUI();
 bool initializeRendererIfNeeded();
@@ -105,7 +104,7 @@ extern int16_t baselineY;
 extern int16_t leftEdge3;
 extern int16_t rightEdge3;
 
-extern bool isPendingDraw;
+extern bool isPendingKyeMarkerDraw;
 
 struct RectI16 {
   std::int16_t left;
@@ -156,5 +155,7 @@ void showHelp();
 void showAboutDialog();
 void renderAllObjects();
 void renderStaticObjects(int row, int col, EntityType tileValue);
+void runTileSparkleEffect(int effectId);
+void renderSparkleTileAndPresent(int sparkleCount);
 
 #endif // GRAPH_H

@@ -4,7 +4,7 @@
 // --------------------------------------------------
 // Interaction / mode
 // --------------------------------------------------
-GameInteractionMode g_interactionMode = GameInteractionMode::NormalPlay;
+GameInteractionMode g_interactionMode = GameInteractionMode::PLAY_MODE;
 
 // --------------------------------------------------
 // Globals:: namespace
@@ -140,7 +140,7 @@ uint16_t speedMultiplierLow  = 0x4650; // fallback legacy
 
 int pendingRow = 0;
 int pendingCol = 0;
-int remainingDiamondCount = 0;
+bool isLeftMouseDragActive = false;
 
 const std::unordered_map<int,const char*> exceptionMessages =
 {
@@ -212,5 +212,6 @@ int stringBufferCapacity = 512;
 
 int g_entryRowTable[1] = {0};
 int g_entryColTable[1] = {0};
-int g_entryEnabledTable[1] = {0};
+EditorEntry g_editorEntries[256] = {};
 int g_levelJustLoadedFlag = 1;
+bool isLevelCompleted = false;

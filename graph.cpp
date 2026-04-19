@@ -23,13 +23,13 @@ struct FileEntry {
     bool isDir = false;
 };
 
-bool isPendingDraw = false;
+bool isPendingKyeMarkerDraw = false;
 uint16_t g_biosTickCountLo = 0;
 uint16_t g_biosTickCountHi = 0;
 
 void maybeDrawPendingRectangle()
 {
-    if (isPendingDraw)
+    if (isPendingKyeMarkerDraw)
     {
         if (g_gameState.tileMap[pendingRow][pendingCol] == EntityType::EMPTY_CELL)
         {
@@ -37,7 +37,7 @@ void maybeDrawPendingRectangle()
         }
     }
 
-    isPendingDraw = false;
+    isPendingKyeMarkerDraw = false;
 }
 
 bool loadSpriteSheets()
@@ -61,34 +61,69 @@ bool loadSpriteSheets()
     return true;
 }
 
-void drawPendingBlock()
+void runTileSparkleEffect(int effectId)
 {
-    const int16_t destY = pendingRow * cellHeight;
-    const int16_t destX = pendingCol * cellWidth;
+    if (!g_renderer)
+        return;
 
-    constexpr int16_t tileSize = 16;
+    if (effectId == 1)
+    {
+        int sparkle = 0x100;
 
-    // Source = (16, 0)
-    SDL_FRect srcRect{
+        while (sparkle >= 0)
+        {
+            renderSparkleTileAndPresent(sparkle);
+            sparkle -= 16;
+        }
+
+        return;
+    }
+
+    if (effectId == 2)
+    {
+        for (int sparkle = 0; sparkle < 0x100; sparkle += 16)
+        {
+            renderSparkleTileAndPresent(sparkle);
+        }
+
+        return;
+    }
+    SDL_FRect src{
+        0.0f,
+        0.0f,
+        16.0f,
+        16.0f
+    };
+    SDL_FRect dst{
+        float(currentCol * cellWidth),
+        float(currentRow * cellHeight),
+        float(cellWidth),
+        float(cellHeight)
+    };
+
+    SDL_RenderTexture(g_renderer, g_sheetKye.tex, &src, &dst);
+}
+
+void drawPendingKyeMarker()
+{
+    if (!g_renderer || !g_sheetKye.tex)
+        return;
+
+    const SDL_FRect srcRect{
         16.0f,
         0.0f,
-        static_cast<float>(tileSize),
-        static_cast<float>(tileSize)
+        16.0f,
+        16.0f
     };
 
-    SDL_FRect dstRect{
-        static_cast<float>(destX),
-        static_cast<float>(destY),
-        static_cast<float>(tileSize),
-        static_cast<float>(tileSize)
+    const SDL_FRect dstRect{
+        float(gridOriginX + pendingCol * cellWidth),
+        float(gridOriginY + pendingRow * cellHeight),
+        16.0f,
+        16.0f
     };
 
-    SDL_RenderTexture(
-        g_renderer,
-        g_sheetKye.tex,
-        &srcRect,
-        &dstRect
-    );
+    SDL_RenderTexture(g_renderer, g_sheetKye.tex, &srcRect, &dstRect);
 }
 
 int isPointInRect(int x, int y) {
@@ -114,9 +149,40 @@ void showMessage(const char* caption, const char* message)
     );
 }
 
+// void drawRectangleFromGrid(int row, int col)
+// {
+//     g_gameState.tileMap[row][col] = EntityType::EMPTY_CELL;
+
+//     const int x = gridOriginX + col * cellWidth;
+//     const int y = gridOriginY + row * cellHeight;
+
+//     SDL_FRect rect{
+//         static_cast<float>(x),
+//         static_cast<float>(y),
+//         static_cast<float>(cellWidth),
+//         static_cast<float>(cellHeight)
+//     };
+
+//     SDL_SetRenderDrawColor(g_renderer, 128, 128, 128, 255);
+//     SDL_RenderFillRect(g_renderer, &rect);
+// }
+
 void drawRectangleFromGrid(int row, int col)
 {
     g_gameState.tileMap[row][col] = EntityType::EMPTY_CELL;
+
+    const int x = gridOriginX + col * cellWidth;
+    const int y = gridOriginY + row * cellHeight;
+
+    SDL_FRect rect{
+        static_cast<float>(x),
+        static_cast<float>(y),
+        static_cast<float>(cellWidth),
+        static_cast<float>(cellHeight)
+    };
+
+    SDL_SetRenderDrawColor(g_renderer, 128, 128, 128, 255);
+    SDL_RenderRect(g_renderer, &rect);
 }
 
 static const char* getLegacyString(uint16_t offset) {
@@ -161,7 +227,7 @@ void initializeWindowSize() {
         appendBytes(windowTitle, sizeof(windowTitle), titleSuffix, 4);
     }
 
-    if (g_interactionMode == GameInteractionMode::PendingBlock) {
+    if (g_interactionMode == GameInteractionMode::EDIT_MODE) {
         const char* modeSuffix = getLegacyString(0x044F);
         appendBytes(windowTitle, sizeof(windowTitle), modeSuffix, 18);
     }
@@ -202,12 +268,10 @@ int initializeGameWindow(
     int cmdShow,
     uint16_t titleSegment,
     uint16_t titleOffset,
-    int skipRegisterClassFlag,
-    void* hInstance
+    int skipRegisterClassFlag
 ) {
     (void)cmdShow;
     (void)skipRegisterClassFlag;
-    (void)hInstance;
 
     char windowTitle[96] = {0};
     const char* title = getPointerFromSegmentOffset(titleSegment, titleOffset);
@@ -238,7 +302,7 @@ int initializeGameWindow(
     clearStatusLine(g_statusLineBuffer);
     updateNextLevelMenuItem();
     matchedEntryCount = 0;
-
+    isLeftMouseDragActive = 0;
     if (!isDiggerKeyword(windowTitle)) {
         showWhatDialog();
     }
@@ -330,6 +394,10 @@ void initializeLayoutRects() {
         rightEdge3 + 2,
         baselineY + kBandHeight + 1
     );
+    g_mainRect.left   = gridOriginX;
+    g_mainRect.top    = gridOriginY;
+    g_mainRect.right  = gridOriginX + GRID_COLS * cellWidth;
+    g_mainRect.bottom = gridOriginY + GRID_ROWS * cellHeight;
 }
 
 void renderEntity(int entityIndex)
@@ -512,10 +580,14 @@ void renderAllEntities()
 
 void renderAllObjects()
 {
-    if (g_interactionMode == GameInteractionMode::NormalPlay)
+    if (g_interactionMode == GameInteractionMode::PLAY_MODE)
     {
         renderFullWallLayer();
         renderAllEntities();
+        if (isPendingKyeMarkerDraw)
+        {
+            drawPendingKyeMarker();
+        }
         if (g_levelJustLoadedFlag)
         {
             g_levelJustLoadedFlag = 0;
@@ -528,7 +600,7 @@ void renderAllObjects()
         return;
     }
 
-    if (g_interactionMode == GameInteractionMode::PendingBlock)
+    if (g_interactionMode == GameInteractionMode::EDIT_MODE)
     {
         renderFullWallLayer();
         renderAllEntities();
@@ -1113,49 +1185,6 @@ void renderSparkleTileAndPresent(int sparkleCount)
     }
 
     SDL_RenderPresent(g_renderer);
-}
-
-void runTileSparkleEffect(int effectId)
-{
-    if (!g_renderer)
-        return;
-
-    if (effectId == 1)
-    {
-        int sparkle = 0x100;
-
-        while (sparkle >= 0)
-        {
-            renderSparkleTileAndPresent(sparkle);
-            sparkle -= 16;
-        }
-
-        return;
-    }
-
-    if (effectId == 2)
-    {
-        for (int sparkle = 0; sparkle < 0x100; sparkle += 16)
-        {
-            renderSparkleTileAndPresent(sparkle);
-        }
-
-        return;
-    }
-    SDL_FRect src{
-        0.0f,
-        0.0f,
-        16.0f,
-        16.0f
-    };
-    SDL_FRect dst{
-        float(currentCol * cellWidth),
-        float(currentRow * cellHeight),
-        float(cellWidth),
-        float(cellHeight)
-    };
-
-    SDL_RenderTexture(g_renderer, g_sheetKye.tex, &src, &dst);
 }
 
 void drawText(int x, int y, const char* text, int len)

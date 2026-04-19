@@ -25,8 +25,8 @@
 // Enums
 // =====================
 enum class GameInteractionMode : int16_t {
-    NormalPlay   = 0,
-    PendingBlock = 1,
+    PLAY_MODE   = 0,
+    EDIT_MODE = 1,
 };
 
 extern GameInteractionMode g_interactionMode;
@@ -94,18 +94,18 @@ enum class EntityType : std::uint16_t
     SQUARE_ARROW_LEFT = 0x0003,
     SQUARE_ARROW_RIGHT = 0x0004,
 
-    MagnetVertical = 0x0005,
-    MagnetHorizontal = 0x0006,
+    MAGNET_VERTICAL = 0x0005,
+    MAGNET_HORIZONTAL = 0x0006,
 
     PUSHER_UP = 0x0007,
     PUSHER_DOWN = 0x0008,
     PUSHER_LEFT = 0x0009,
     PUSHER_RIGHT = 0x000A,
 
-    CURVED_ARROW_UP = 0x000B,
-    CURVED_ARROW_DOWN = 0x000C,
-    CURVED_ARROW_LEFT = 0x000D,
-    CURVED_ARROW_RIGHT = 0x000E,
+    ROUNDED_ARROW_UP = 0x000B,
+    ROUNDED_ARROW_DOWN = 0x000C,
+    ROUNDED_ARROW_LEFT = 0x000D,
+    ROUNDED_ARROW_RIGHT = 0x000E,
 
     EnemyPropeller = 0x000F,
     EnemyJaw = 0x0010,
@@ -174,17 +174,17 @@ public:
 
     std::array<EntityInfo,256> entities; // 172E
 
-    EntityType tileMap[GRID_ROWS][GRID_COLS]; // 127E
-    int16_t rightEntityMap[GRID_ROWS][GRID_COLS]; // 127C
-    int16_t leftEntityMap[GRID_ROWS][GRID_COLS]; // 1280
-    int16_t topEntityMap[GRID_ROWS][GRID_COLS];
-    int16_t bottomEntityMap[GRID_ROWS][GRID_COLS]; // 12A6
+    int16_t topEntityMap[GRID_ROWS][GRID_COLS];      // 1256
+    int16_t entityAbove[GRID_ROWS][GRID_COLS];      // 122E
+    int16_t entityToRight[GRID_ROWS][GRID_COLS];    // 127A
+    int16_t rightEntityMap[GRID_ROWS][GRID_COLS];   // 127C
+    EntityType tileMap[GRID_ROWS][GRID_COLS];       // 127E
+    int16_t leftEntityMap[GRID_ROWS][GRID_COLS];    // 1280
+    int16_t entityToLeft[GRID_ROWS][GRID_COLS];     // 1282
     int16_t auxTopRightEntityMap[GRID_ROWS][GRID_COLS]; // 12A4
+    int16_t bottomEntityMap[GRID_ROWS][GRID_COLS];  // 12A6
     int16_t auxBottomRightEntityMap[GRID_ROWS][GRID_COLS]; // 12A8
-    int16_t entityToLeft[GRID_ROWS][GRID_COLS]; // 1282
-    int16_t entityToRight[GRID_ROWS][GRID_COLS]; // 127A
-    int16_t entityBelow[GRID_ROWS][GRID_COLS]; // 12CE
-    int16_t entityAbove[GRID_ROWS][GRID_COLS]; // 122E
+    int16_t entityBelow[GRID_ROWS][GRID_COLS];      // 12CE
 
     std::vector<int> bottomLeftEntityTable;
 
@@ -244,18 +244,18 @@ constexpr std::array<EntityMappingEntry, 60> ENTITY_MAPPINGS = {{
     { EntityClass::Mobile, 0x00, EntityType::SQUARE_ARROW_LEFT, 'l' },
     { EntityClass::Mobile, 0x00, EntityType::SQUARE_ARROW_RIGHT, 'r' },
 
-    { EntityClass::Mobile, 0x00, EntityType::MagnetVertical, 's' },
-    { EntityClass::Mobile, 0x00, EntityType::MagnetHorizontal, 'S' },
+    { EntityClass::Mobile, 0x00, EntityType::MAGNET_VERTICAL, 's' },
+    { EntityClass::Mobile, 0x00, EntityType::MAGNET_HORIZONTAL, 'S' },
 
     { EntityClass::Mobile, 0x00, EntityType::PUSHER_UP, 'U' },
     { EntityClass::Mobile, 0x00, EntityType::PUSHER_DOWN, 'D' },
     { EntityClass::Mobile, 0x00, EntityType::PUSHER_LEFT, 'L' },
     { EntityClass::Mobile, 0x00, EntityType::PUSHER_RIGHT, 'R' },
 
-    { EntityClass::Mobile, 0x00, EntityType::CURVED_ARROW_UP, '^' },
-    { EntityClass::Mobile, 0x00, EntityType::CURVED_ARROW_DOWN, 'v' },
-    { EntityClass::Mobile, 0x00, EntityType::CURVED_ARROW_LEFT, '<' },
-    { EntityClass::Mobile, 0x00, EntityType::CURVED_ARROW_RIGHT, '>' },
+    { EntityClass::Mobile, 0x00, EntityType::ROUNDED_ARROW_UP, '^' },
+    { EntityClass::Mobile, 0x00, EntityType::ROUNDED_ARROW_DOWN, 'v' },
+    { EntityClass::Mobile, 0x00, EntityType::ROUNDED_ARROW_LEFT, '<' },
+    { EntityClass::Mobile, 0x00, EntityType::ROUNDED_ARROW_RIGHT, '>' },
 
     { EntityClass::Mobile, 0x00, EntityType::EnemyPropeller, 'T' },
     { EntityClass::Mobile, 0x00, EntityType::EnemyJaw, 'E' },
@@ -432,6 +432,16 @@ using EntityHandler = void(*)(int entityIndex);
 
 extern const std::unordered_map<int,const char*> exceptionMessages;
 
+struct EditorEntry
+{
+    std::int16_t actionType; // +0x00  => ASM 0x6B8
+    std::int16_t tileId;     // +0x02  => ASM 0x6BA
+    std::int16_t enabled;    // +0x04  => ASM 0x6BC
+    std::uint8_t padding[0x1A - 6];
+};
+
+extern EditorEntry g_editorEntries[];
+
 struct PackedMessage
 {
     const char* message;
@@ -443,7 +453,7 @@ constexpr PackedMessage kFloatingPointMessage{
     3
 };
 
-extern int remainingDiamondCount;
+extern bool isLeftMouseDragActive;
 
 struct NotificationEntry
 {
@@ -504,6 +514,7 @@ extern std::int16_t cellWidth;
 extern std::int16_t cellHeight;
 
 extern int g_levelJustLoadedFlag;
+extern bool isLevelCompleted;
 
 void moveAndRedrawEntity(int entityIndex, int row, int col);
 void markEntryInactive(int index);
@@ -516,7 +527,7 @@ void handleEngineEvent(uint16_t, uint16_t, uint16_t);
 void cleanupAndTerminate(int code);
 void handleUnknownEntityType(int entityIndex);
 void setStatusText(const std::string& text);
-void handleClickOnGridCell(uint32_t);
+int handleClickOnGridCell(int row, int col);
 void updateGridCell(int row, int col);
 int executeCurrentEntryAction(int16_t actionType,
                               EntityType tileId,

@@ -49,7 +49,7 @@ int main(int argc, char** argv)
     cout << "runLegacyCallbackQueue" << endl;
     runLegacyCallbackQueue();
     cout << "initializeGameWindow" << endl;
-    initializeGameWindow(1, 0, 0, 0, nullptr);
+    initializeGameWindow(1, 0, 0, 0);
 
     drainPendingEvents();
     processCallbackQueueFromEngineEvent();
