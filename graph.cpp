@@ -1242,14 +1242,14 @@ void renderStaticObjects(int row, int col, EntityType tileValue)
     switch (tileValue)
     {
         case EntityType::BOTTOM_LEFT_ROUND_WALL: srcRect.x = 0x30; srcRect.y = 0x00; break;
-        case EntityType::BOTTOM_ROUNDED_WALL: srcRect.x = 0x40; srcRect.y = 0x00; break;
+        case EntityType::BOTTOM_ROUND_WALL: srcRect.x = 0x40; srcRect.y = 0x00; break;
         case EntityType::BOTTOM_RIGHT_ROUND_WALL: srcRect.x = 0x50; srcRect.y = 0x00; break;
-        case EntityType::LEFT_ROUNDED_WALL: srcRect.x = 0x60; srcRect.y = 0x00; break;
+        case EntityType::LEFT_ROUND_WALL: srcRect.x = 0x60; srcRect.y = 0x00; break;
         case EntityType::SQUARE_WALL: srcRect.x = 0x70; srcRect.y = 0x00; break;
-        case EntityType::RIGHT_ROUNDED_WALL: srcRect.x = 0x80; srcRect.y = 0x00; break;
-        case EntityType::TOP_LEFT_ROUNDED_WALL: srcRect.x = 0x90; srcRect.y = 0x00; break;
-        case EntityType::TOP_ROUNDED_WALL: srcRect.x = 0xA0; srcRect.y = 0x00; break;
-        case EntityType::TOP_RIGHT_ROUNDED_WALL: srcRect.x = 0xB0; srcRect.y = 0x00; break;
+        case EntityType::RIGHT_ROUND_WALL: srcRect.x = 0x80; srcRect.y = 0x00; break;
+        case EntityType::TOP_LEFT_ROUND_WALL: srcRect.x = 0x90; srcRect.y = 0x00; break;
+        case EntityType::TOP_ROUND_WALL: srcRect.x = 0xA0; srcRect.y = 0x00; break;
+        case EntityType::TOP_RIGHT_ROUND_WALL: srcRect.x = 0xB0; srcRect.y = 0x00; break;
         case EntityType::BREAKABLE_BRICK: srcRect.x = 0x00; srcRect.y = 0x00; break;
         case EntityType::DIAMOND: srcRect.x = 0xC0; srcRect.y = 0x00; break;
         case EntityType::ONE_WAY_LEFT_TO_RIGHT_PORTAL: srcRect.x = 0xE0; srcRect.y = 0x00; break;

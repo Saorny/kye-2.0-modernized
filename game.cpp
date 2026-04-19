@@ -143,7 +143,7 @@ static int findEntityAt(int row, int col)
 
 static inline bool isFixedTile(EntityType type)
 {
-    return type >= EntityType::TOP_RIGHT_ROUNDED_WALL && type <= EntityType::BOTTOM_LEFT_ROUND_WALL;
+    return type >= EntityType::TOP_RIGHT_ROUND_WALL && type <= EntityType::BOTTOM_LEFT_ROUND_WALL;
 }
 
 static void onDiamondCollected()
@@ -950,7 +950,7 @@ int postLoadLevel()
     {
         EntityType& cell = g_gameState.tileMap[row][0];
 
-        if (!(cell >= EntityType::TOP_RIGHT_ROUNDED_WALL &&
+        if (!(cell >= EntityType::TOP_RIGHT_ROUND_WALL &&
               cell <= EntityType::BOTTOM_LEFT_ROUND_WALL))
         {
             if (static_cast<int16_t>(cell) >= 0)
@@ -966,7 +966,7 @@ int postLoadLevel()
     {
         EntityType& cell = g_gameState.tileMap[0][col];
 
-        if (!(cell >= EntityType::TOP_RIGHT_ROUNDED_WALL &&
+        if (!(cell >= EntityType::TOP_RIGHT_ROUND_WALL &&
               cell <= EntityType::BOTTOM_LEFT_ROUND_WALL))
         {
             if (static_cast<int16_t>(cell) >= 0)
@@ -1651,6 +1651,7 @@ int renderLivesAndLevelInfo()
         (float)separatorX,
         (float)(hudY + 20)
     );
+
     if (!g_levelHintText.empty())
     {
         drawTextAt(hudX + 320, hudY + 2,
@@ -1752,7 +1753,7 @@ int executeCurrentEntryAction(int16_t actionType,
     {
         case 1:
         {
-            if (type >= EntityType::TOP_RIGHT_ROUNDED_WALL && type <= EntityType::BOTTOM_LEFT_ROUND_WALL)
+            if (type >= EntityType::TOP_RIGHT_ROUND_WALL && type <= EntityType::BOTTOM_LEFT_ROUND_WALL)
             {
                 g_gameState.tileMap[row][col] = type;
                 return 0;
@@ -2554,6 +2555,9 @@ int tickLevelFlow()
 
     if (isLevelCompleted != 0)
     {
+        renderHudAndFrame();
+        updateWindow();
+
         if (levelIndex >= levelCount)
         {
             showFinalDialog();
@@ -2564,11 +2568,11 @@ int tickLevelFlow()
             showLevelDoneDialog();
             levelIndex++;
         }
+
         loadLevelByIndex(levelIndex);
         showNewLevelDialog(g_windowHandle2);
 
         isLeftMouseDragActive = 0;
-
         clearStatusLine(g_statusLineBuffer);
 
         invalidateWindow();
@@ -2597,8 +2601,8 @@ int tickLevelFlow()
             }
         }
     }
-    advanceToNextLevelOrBlock();
 
+    advanceToNextLevelOrBlock();
     g_timerActive = 1;
 
     return 0;
@@ -3916,8 +3920,8 @@ void handleRoundedArrowUp(int entityIndex)
         leftCellsEmpty &&
         (
             obstacleAbove == static_cast<int16_t>(EntityType::BOTTOM_LEFT_ROUND_WALL) ||
-            obstacleAbove == static_cast<int16_t>(EntityType::BOTTOM_ROUNDED_WALL) ||
-            obstacleAbove == static_cast<int16_t>(EntityType::LEFT_ROUNDED_WALL) ||
+            obstacleAbove == static_cast<int16_t>(EntityType::BOTTOM_ROUND_WALL) ||
+            obstacleAbove == static_cast<int16_t>(EntityType::LEFT_ROUND_WALL) ||
             isRoundedArrowAbove ||
             isRoundedPushableAbove
         );
@@ -3926,8 +3930,8 @@ void handleRoundedArrowUp(int entityIndex)
         rightCellsEmpty &&
         (
             obstacleAbove == static_cast<int16_t>(EntityType::BOTTOM_RIGHT_ROUND_WALL) ||
-            obstacleAbove == static_cast<int16_t>(EntityType::BOTTOM_ROUNDED_WALL) ||
-            obstacleAbove == static_cast<int16_t>(EntityType::RIGHT_ROUNDED_WALL) ||
+            obstacleAbove == static_cast<int16_t>(EntityType::BOTTOM_ROUND_WALL) ||
+            obstacleAbove == static_cast<int16_t>(EntityType::RIGHT_ROUND_WALL) ||
             isRoundedArrowAbove ||
             isRoundedPushableAbove
         );
@@ -4021,6 +4025,18 @@ void handleRoundedArrowDown(int entityIndex)
         return;
     }
 
+    // FIX 2: glide on TOP_LEFT_ROUNDED_WALL => RIGHT
+    if (obstacleBelow == static_cast<int16_t>(EntityType::TOP_LEFT_ROUND_WALL))
+    {
+        if (col + 1 < GRID_COLS &&
+            s.tileMap[row][col + 1] == EntityType::EMPTY_CELL)
+        {
+            moveAndRedrawEntity(entityIndex, row, col + 1);
+            handleUnknownEntityType(entityIndex);
+            return;
+        }
+    }
+
     bool isRoundedArrowBelow = false;
     bool isRoundedPushableBelow = false;
 
@@ -4053,10 +4069,11 @@ void handleRoundedArrowDown(int entityIndex)
     const bool allowLeft =
         leftCellsEmpty &&
         (
-            obstacleBelow == static_cast<int16_t>(EntityType::TOP_RIGHT_ROUNDED_WALL) ||
-            obstacleBelow == static_cast<int16_t>(EntityType::TOP_ROUNDED_WALL) ||
-            obstacleBelow == static_cast<int16_t>(EntityType::RIGHT_ROUNDED_WALL) ||
-            obstacleBelow == static_cast<int16_t>(EntityType::LEFT_ROUNDED_WALL) ||
+            obstacleBelow == static_cast<int16_t>(EntityType::TOP_RIGHT_ROUND_WALL) ||
+            obstacleBelow == static_cast<int16_t>(EntityType::TOP_ROUND_WALL) ||
+            obstacleBelow == static_cast<int16_t>(EntityType::RIGHT_ROUND_WALL) ||
+            obstacleBelow == static_cast<int16_t>(EntityType::LEFT_ROUND_WALL) ||
+            obstacleBelow == static_cast<int16_t>(EntityType::TOP_LEFT_ROUND_WALL) ||
             isRoundedArrowBelow ||
             isRoundedPushableBelow
         );
@@ -4064,10 +4081,11 @@ void handleRoundedArrowDown(int entityIndex)
     const bool allowRight =
         rightCellsEmpty &&
         (
-            obstacleBelow == static_cast<int16_t>(EntityType::TOP_LEFT_ROUNDED_WALL) ||
-            obstacleBelow == static_cast<int16_t>(EntityType::TOP_ROUNDED_WALL) ||
-            obstacleBelow == static_cast<int16_t>(EntityType::LEFT_ROUNDED_WALL) ||
-            obstacleBelow == static_cast<int16_t>(EntityType::RIGHT_ROUNDED_WALL) ||
+            obstacleBelow == static_cast<int16_t>(EntityType::TOP_LEFT_ROUND_WALL) ||
+            obstacleBelow == static_cast<int16_t>(EntityType::TOP_ROUND_WALL) ||
+            obstacleBelow == static_cast<int16_t>(EntityType::LEFT_ROUND_WALL) ||
+            obstacleBelow == static_cast<int16_t>(EntityType::RIGHT_ROUND_WALL) ||
+            obstacleBelow == static_cast<int16_t>(EntityType::TOP_RIGHT_ROUND_WALL) ||
             isRoundedArrowBelow ||
             isRoundedPushableBelow
         );
@@ -4161,6 +4179,17 @@ void handleRoundedArrowLeft(int entityIndex)
         return;
     }
 
+    if (obstacleLeft == static_cast<int16_t>(EntityType::TOP_RIGHT_ROUND_WALL))
+    {
+        if (row + 1 < GRID_ROWS &&
+            s.tileMap[row + 1][col] == EntityType::EMPTY_CELL)
+        {
+            moveAndRedrawEntity(entityIndex, row + 1, col);
+            handleUnknownEntityType(entityIndex);
+            return;
+        }
+    }
+
     bool isRoundedArrowLeft = false;
     bool isRoundedPushableLeft = false;
 
@@ -4194,8 +4223,9 @@ void handleRoundedArrowLeft(int entityIndex)
         upCellsEmpty &&
         (
             obstacleLeft == static_cast<int16_t>(EntityType::BOTTOM_RIGHT_ROUND_WALL) ||
-            obstacleLeft == static_cast<int16_t>(EntityType::RIGHT_ROUNDED_WALL) ||
-            obstacleLeft == static_cast<int16_t>(EntityType::BOTTOM_ROUNDED_WALL) ||
+            obstacleLeft == static_cast<int16_t>(EntityType::RIGHT_ROUND_WALL) ||
+            obstacleLeft == static_cast<int16_t>(EntityType::BOTTOM_ROUND_WALL) ||
+            obstacleLeft == static_cast<int16_t>(EntityType::TOP_RIGHT_ROUND_WALL) ||
             isRoundedArrowLeft ||
             isRoundedPushableLeft
         );
@@ -4203,9 +4233,10 @@ void handleRoundedArrowLeft(int entityIndex)
     const bool allowDown =
         downCellsEmpty &&
         (
-            obstacleLeft == static_cast<int16_t>(EntityType::TOP_RIGHT_ROUNDED_WALL) ||
-            obstacleLeft == static_cast<int16_t>(EntityType::RIGHT_ROUNDED_WALL) ||
-            obstacleLeft == static_cast<int16_t>(EntityType::TOP_ROUNDED_WALL) ||
+            obstacleLeft == static_cast<int16_t>(EntityType::TOP_RIGHT_ROUND_WALL) ||
+            obstacleLeft == static_cast<int16_t>(EntityType::RIGHT_ROUND_WALL) ||
+            obstacleLeft == static_cast<int16_t>(EntityType::TOP_ROUND_WALL) ||
+            obstacleLeft == static_cast<int16_t>(EntityType::BOTTOM_RIGHT_ROUND_WALL) ||
             isRoundedArrowLeft ||
             isRoundedPushableLeft
         );
@@ -4213,13 +4244,9 @@ void handleRoundedArrowLeft(int entityIndex)
     if (allowUp && allowDown)
     {
         if (DeterministicRNG::next(0, 1) == 0)
-        {
             moveAndRedrawEntity(entityIndex, row + 1, col - 1);
-        }
         else
-        {
             moveAndRedrawEntity(entityIndex, row - 1, col - 1);
-        }
 
         handleUnknownEntityType(entityIndex);
         return;
@@ -4331,9 +4358,9 @@ void handleRoundedArrowRight(int entityIndex)
     const bool allowUp =
         upCellsEmpty &&
         (
-            obstacleRight == static_cast<int16_t>(EntityType::TOP_LEFT_ROUNDED_WALL) ||
-            obstacleRight == static_cast<int16_t>(EntityType::LEFT_ROUNDED_WALL) ||
-            obstacleRight == static_cast<int16_t>(EntityType::TOP_ROUNDED_WALL) ||
+            obstacleRight == static_cast<int16_t>(EntityType::TOP_LEFT_ROUND_WALL) ||
+            obstacleRight == static_cast<int16_t>(EntityType::LEFT_ROUND_WALL) ||
+            obstacleRight == static_cast<int16_t>(EntityType::TOP_ROUND_WALL) ||
             isRoundedArrowRight ||
             isRoundedPushableRight
         );
@@ -4342,8 +4369,8 @@ void handleRoundedArrowRight(int entityIndex)
         downCellsEmpty &&
         (
             obstacleRight == static_cast<int16_t>(EntityType::BOTTOM_LEFT_ROUND_WALL) ||
-            obstacleRight == static_cast<int16_t>(EntityType::LEFT_ROUNDED_WALL) ||
-            obstacleRight == static_cast<int16_t>(EntityType::BOTTOM_ROUNDED_WALL) ||
+            obstacleRight == static_cast<int16_t>(EntityType::LEFT_ROUND_WALL) ||
+            obstacleRight == static_cast<int16_t>(EntityType::BOTTOM_ROUND_WALL) ||
             isRoundedArrowRight ||
             isRoundedPushableRight
         );

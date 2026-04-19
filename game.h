@@ -71,14 +71,14 @@ enum class EntityType : std::uint16_t
 
     // --- Walls
     BOTTOM_LEFT_ROUND_WALL = 0xFFFD,
-    BOTTOM_ROUNDED_WALL = 0xFFFC,
+    BOTTOM_ROUND_WALL = 0xFFFC,
     BOTTOM_RIGHT_ROUND_WALL = 0xFFFB,
-    LEFT_ROUNDED_WALL = 0xFFFA,
+    LEFT_ROUND_WALL = 0xFFFA,
     SQUARE_WALL = 0xFFF9,
-    RIGHT_ROUNDED_WALL = 0xFFF8,
-    TOP_LEFT_ROUNDED_WALL = 0xFFF7,
-    TOP_ROUNDED_WALL = 0xFFF6,
-    TOP_RIGHT_ROUNDED_WALL = 0xFFF5,
+    RIGHT_ROUND_WALL = 0xFFF8,
+    TOP_LEFT_ROUND_WALL = 0xFFF7,
+    TOP_ROUND_WALL = 0xFFF6,
+    TOP_RIGHT_ROUND_WALL = 0xFFF5,
 
     BREAKABLE_BRICK = 0xFFF4,
     DIAMOND = 0xFFF3,
@@ -222,14 +222,14 @@ constexpr std::array<EntityMappingEntry, 60> ENTITY_MAPPINGS = {{
 
     // Walls
     { EntityClass::Fixed, 0x00, EntityType::BOTTOM_LEFT_ROUND_WALL, '1' },
-    { EntityClass::Fixed, 0x00, EntityType::BOTTOM_ROUNDED_WALL, '2' },
+    { EntityClass::Fixed, 0x00, EntityType::BOTTOM_ROUND_WALL, '2' },
     { EntityClass::Fixed, 0x00, EntityType::BOTTOM_RIGHT_ROUND_WALL, '3' },
-    { EntityClass::Fixed, 0x00, EntityType::LEFT_ROUNDED_WALL, '4' },
+    { EntityClass::Fixed, 0x00, EntityType::LEFT_ROUND_WALL, '4' },
     { EntityClass::Fixed, 0x00, EntityType::SQUARE_WALL, '5' },
-    { EntityClass::Fixed, 0x00, EntityType::RIGHT_ROUNDED_WALL, '6' },
-    { EntityClass::Fixed, 0x00, EntityType::TOP_LEFT_ROUNDED_WALL, '7' },
-    { EntityClass::Fixed, 0x00, EntityType::TOP_ROUNDED_WALL, '8' },
-    { EntityClass::Fixed, 0x00, EntityType::TOP_RIGHT_ROUNDED_WALL, '9' },
+    { EntityClass::Fixed, 0x00, EntityType::RIGHT_ROUND_WALL, '6' },
+    { EntityClass::Fixed, 0x00, EntityType::TOP_LEFT_ROUND_WALL, '7' },
+    { EntityClass::Fixed, 0x00, EntityType::TOP_ROUND_WALL, '8' },
+    { EntityClass::Fixed, 0x00, EntityType::TOP_RIGHT_ROUND_WALL, '9' },
 
     { EntityClass::Fixed, 0x00, EntityType::BREAKABLE_BRICK, 'e' },
     { EntityClass::Fixed, 0x00, EntityType::DIAMOND, '*' },
