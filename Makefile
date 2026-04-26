@@ -20,6 +20,7 @@ graph.cpp \
 graph_globals.cpp \
 file.cpp \
 file_globals.cpp \
+menu.cpp \
 game.cpp \
 game_globals.cpp \
 system.cpp \

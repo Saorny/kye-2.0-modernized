@@ -15,6 +15,8 @@
 #include "util.h"
 #include "system.h"
 
+
+
 namespace fs = std::filesystem;
 
 struct FileEntry {
@@ -48,10 +50,7 @@ bool loadSpriteSheets()
     g_sheetKye      = loadBmpSheet(g_renderer, "graph/graph_kye.bmp",      16, 16);
     g_sheetMobiles  = loadBmpSheet(g_renderer, "graph/graph_mobiles.bmp",  16, 16);
     g_sheetStatics  = loadBmpSheet(g_renderer, "graph/graph_statics.bmp",  16, 16);
-    // g_sheetFont     = loadBmpSheet(g_renderer, "graph/font.bmp",           8, 16);
-    // TTF_Font* font = TTF_OpenFont("graph/font.otf", 16);
     g_font = TTF_OpenFont("graph/font3.ttf", 16);
-    // g_font = TTF_OpenFont("C:/Windows/Fonts/arial.ttf", 16);
     cout << "g_font => " << g_font << endl;
     std::cout << "Statics sheet size = "
           << g_sheetStatics.w << " x "
@@ -95,8 +94,8 @@ void runTileSparkleEffect(int effectId)
         16.0f
     };
     SDL_FRect dst{
-        float(currentCol * cellWidth),
-        float(currentRow * cellHeight),
+        float(gridOriginX + currentCol * cellWidth),
+        float(gridOriginY + currentRow * cellHeight),
         float(cellWidth),
         float(cellHeight)
     };
@@ -149,24 +148,6 @@ void showMessage(const char* caption, const char* message)
     );
 }
 
-// void drawRectangleFromGrid(int row, int col)
-// {
-//     g_gameState.tileMap[row][col] = EntityType::EMPTY_CELL;
-
-//     const int x = gridOriginX + col * cellWidth;
-//     const int y = gridOriginY + row * cellHeight;
-
-//     SDL_FRect rect{
-//         static_cast<float>(x),
-//         static_cast<float>(y),
-//         static_cast<float>(cellWidth),
-//         static_cast<float>(cellHeight)
-//     };
-
-//     SDL_SetRenderDrawColor(g_renderer, 128, 128, 128, 255);
-//     SDL_RenderFillRect(g_renderer, &rect);
-// }
-
 void drawRectangleFromGrid(int row, int col)
 {
     g_gameState.tileMap[row][col] = EntityType::EMPTY_CELL;
@@ -216,7 +197,6 @@ void initializeWindowSize() {
     const char* titlePrefix = getLegacyString(0x0444);
     appendBytes(windowTitle, sizeof(windowTitle), titlePrefix, 4);
     const char* base = "Kye (Modern)";
-    // const char* base = getLegacyString(g_selectedFilePath);
     if (base && base[0] != '\0') {
         const char* titleMid5 = getLegacyString(0x0448);
         appendBytes(windowTitle, sizeof(windowTitle), titleMid5, 5);
@@ -323,24 +303,19 @@ void DLG_OK_FUNC()
 void showDialog(const char* dialogId, VoidCallback onOk)
 {
     g_newLevelDialogOpen = true;
-
-    // Layout simple centré
     g_panel = { 200.f, 150.f, 240.f, 140.f };
-
     g_okBtn = {
         g_panel.x + 30.f,
         g_panel.y + g_panel.h - 40.f,
         70.f,
         30.f
     };
-
     g_cancelBtn = {
         g_panel.x + g_panel.w - 100.f,
         g_panel.y + g_panel.h - 40.f,
         70.f,
         30.f
     };
-
     reinterpret_cast<uintptr_t>(onOk);
 }
 
@@ -355,39 +330,42 @@ static SDL_Rect makeRectLTRB(int l, int t, int r, int b) {
 
 void initializeLayoutRects() {
     if (!g_window) return;
-
-    // SDL3: préfère "InPixels" si tu veux coller au rendu réel (DPI)
     int winW = 0, winH = 0;
     SDL_GetWindowSizeInPixels(g_window, &winW, &winH);
 
-    // En Win32, clientRect.left/top = 0 en coords client.
-    // Donc l’équivalent simple en SDL : client = (0,0, winW, winH)
     g_clientRectPx = SDL_Rect{ 0, 0, winW, winH };
 
-    // (Optionnel) windowRect : SDL ne te donne pas un "screen rect" LTRB comme Win32,
-    // mais tu peux stocker la même chose que client pour tes calculs.
     g_windowRectPx = g_clientRectPx;
 
-    // si = 0x10 dans l'asm
-    constexpr int kBandHeight = 0x10; // 16
+    constexpr int kBandHeight = 0x10;
 
-    // A) gridOriginY : 480x320 à partir du client origin
+    gridOriginX = 0;
+    gridOriginY = MENU_BAR_HEIGHT;
+    baselineY = MENU_BAR_HEIGHT + GRID_ROWS * cellHeight;
+    baseY = baselineY;
+
+    uiTopY = baselineY;
+    uiBottomY = baselineY + 16;
+    uiBottomLineY = baselineY + 16;
+
+    baseX = 0;
+    uiTopX = 0;
+    uiRightX = GRID_COLS * cellWidth;
+
     g_gridRectPx = makeRectLTRB(
         g_clientRectPx.x,
-        g_clientRectPx.y,
-        g_clientRectPx.x + 0x1E0, // 480
-        g_clientRectPx.y + 0x140  // 320
+        g_clientRectPx.y + MENU_BAR_HEIGHT,
+        g_clientRectPx.x + 0x1E0,
+        g_clientRectPx.y + MENU_BAR_HEIGHT + 0x140
     );
 
-    // B) baseX : bande UI gauche
     g_baseRectPx = makeRectLTRB(
         g_clientRectPx.x,
         baselineY + 1,
-        g_clientRectPx.x + 0x12C, // 300
+        g_clientRectPx.x + 0x12C,
         baselineY + kBandHeight + 1
     );
 
-    // C) invalidatedRect : bande UI droite
     g_invalidateRectPx = makeRectLTRB(
         leftEdge3,
         baselineY + 1,
@@ -438,6 +416,16 @@ void renderEntity(int entityIndex)
         int index = (int)type - (int)EntityType::COUNTDOWN_0;
         srcX = index * 16.0f; 
         srcY = 16.0f;
+    }
+    else if (type == EntityType::Lava)
+    {
+        srcX = static_cast<float>((entity.animFrame & 3) * 16);
+        srcY = 0x80;
+    }
+    else if (type == EntityType::Lava2)
+    {
+        srcX = static_cast<float>((entity.animFrame & 3) * 16);
+        srcY = 0x90;
     }
     else
     {
@@ -493,7 +481,7 @@ int showNameInputDialog()
 
             if (e.type == SDL_EVENT_TEXT_INPUT) {
                 if (g_levelInput.size() < 120) {
-                    g_levelInput += e.text.text; // UTF-8
+                    g_levelInput += e.text.text;
                 }
             }
 
@@ -630,12 +618,6 @@ int renderHudAndFrame()
         (float)(uiBottomLineY + 2)
     );
     renderLivesAndLevelInfo();
-    // drawTextAt(
-    //     (int16_t)(g_invalidateRectPx.x + 4),
-    //     (int16_t)uiTopY,
-    //     hudMessageText,
-    //     (int)strlen(hudMessageText)
-    // );
     return 1;
 }
 
@@ -719,8 +701,6 @@ static void refreshListing(
     std::vector<FileEntry>& out
 ) {
     out.clear();
-
-    // parent dir shortcut
     if (dir.has_parent_path()) {
         out.push_back(FileEntry{ "..", dir.parent_path(), true });
     }
@@ -750,7 +730,6 @@ static void refreshListing(
         }
     }
 
-    // tri: dirs d’abord, puis alpha
     std::stable_sort(out.begin(), out.end(), [](const FileEntry& a, const FileEntry& b) {
         if (a.isDir != b.isDir) return a.isDir > b.isDir;
         return a.name < b.name;
@@ -761,21 +740,18 @@ struct FileDialogState {
     bool initialized = false;
 
     fs::path currentDir;
-    std::string extFilter;       // ".kye"
+    std::string extFilter;
     std::vector<FileEntry> items;
 
     int selectedIndex = -1;
 
     uint32_t lastClickTicks = 0;
     int lastClickIndex = -1;
-
-    // layout très simple
     int x = 40, y = 40, w = 720, h = 520;
     int rowH = 22;
     int scroll = 0;
 };
 
-// Petit helper de hit-test
 static int hitTestIndex(const FileDialogState& st, int mx, int my) {
     const int listX = st.x + 10;
     const int listY = st.y + 50;
@@ -839,8 +815,6 @@ static void renderSimple(FileDialogState& st, SDL_Renderer* r)
             SDL_SetRenderDrawColor(r, 70, 70, 90, 255);
             SDL_RenderFillRect(r, &rowRect);
         }
-
-        // icône
         SDL_FRect icon{
             rowRect.x + 6.0f,
             rowRect.y + 4.0f,
@@ -892,17 +866,13 @@ bool fileOpenDialog_SDL(
 ) {
     static FileDialogState st;
 
-    // 1) init = équivalent logique de sub_2A48
     if (!st.initialized) {
         st.initialized = true;
-        st.extFilter = extensionFromGlob(defaultFilter); // "*.kye" -> ".kye"
+        st.extFilter = extensionFromGlob(defaultFilter);
 
-        // équivalent "buffer = str_060C + str_068C" puis DlgDirList:
-        // ici on interprète ça comme un "répertoire initial"
         std::string initial = safeJoinStrings(partA, partB);
         fs::path p = initial.empty() ? fs::current_path() : fs::path(initial);
 
-        // si c’est un fichier, on prend son parent
         std::error_code ec;
         if (fs::is_regular_file(p, ec)) p = p.parent_path();
         if (p.empty() || !fs::exists(p, ec) || !fs::is_directory(p, ec)) {
@@ -915,9 +885,8 @@ bool fileOpenDialog_SDL(
         st.scroll = 0;
     }
 
-    // 2) input handling
     if (e.type == SDL_EVENT_MOUSE_WHEEL) {
-        st.scroll -= e.wheel.y; // wheel up => y=+1
+        st.scroll -= e.wheel.y;
         clampScroll(st);
     } else if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN && e.button.button == SDL_BUTTON_LEFT) {
         const int idx = hitTestIndex(st, e.button.x, e.button.y);
@@ -938,12 +907,11 @@ bool fileOpenDialog_SDL(
                     st.scroll = 0;
                 } else {
                     outSelectedPath = it.fullPath.string();
-                    st.initialized = false; // fermer
+                    st.initialized = false;
                     return true;
                 }
             }
         } else {
-            // clic boutons? (simple)
             SDL_Rect btnOk{ st.x + st.w - 180, st.y + st.h - 40, 80, 26 };
             SDL_Rect btnCancel{ st.x + st.w - 90, st.y + st.h - 40, 80, 26 };
             auto inRect = [](int x, int y, const SDL_Rect& r) {
@@ -1107,8 +1075,6 @@ static void renderKyeTile()
 {
     const int dstX = currentCol * cellWidth;
     const int dstY = currentRow * cellHeight;
-
-    // Kye sprite position dans la sheet
     constexpr int srcX = 0;
     constexpr int srcY = 0;
 
@@ -1119,7 +1085,6 @@ void SpriteSheet16::blit16(int,int,int,int) {}
 
 static void renderSparkle(float intensity)
 {
-    // intensity : 0.0 → 1.0
     SDL_SetRenderDrawBlendMode(g_renderer, SDL_BLENDMODE_BLEND);
 
     SDL_FRect rect;
@@ -1169,11 +1134,7 @@ void renderSparkleTileAndPresent(int sparkleCount)
         16.0f,
         16.0f
     };
-
-    // draw Kye
     SDL_RenderTexture(g_renderer, g_sheetKye.tex, &src, &dst);
-
-    // sparkle pixels
     SDL_SetRenderDrawColor(g_renderer, 255,255,255,255);
 
     for (int i = 0; i < sparkleCount; i++)

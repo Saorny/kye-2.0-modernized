@@ -549,5 +549,6 @@ extern std::string g_levelHintText;
 extern std::string g_levelPassword;
 extern std::string g_levelVictoryText;
 
+extern int  levelCount;
 
 #endif // GAME_H

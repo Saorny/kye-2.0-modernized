@@ -59,7 +59,6 @@ FileCallback validateBuffer = nullptr;
 // File access state
 // --------------------------------------------------
 int  fileAccessEnabled = 0x64;
-int  totalBlockCount   = 1;
 char lastWrittenChar   = 0;
 
 // --------------------------------------------------

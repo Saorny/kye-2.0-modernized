@@ -17,9 +17,9 @@
 #include "graph.h"
 #include "game.h"
 #include "tinyfiledialogs.h"
+#include "menu.h"
 
 int levelIndex = 1;
-int levelCount = 1;
 int g_hasPendingModal = 0;
 int remainingLives = 3;
 
@@ -40,9 +40,6 @@ std::int16_t baseY = 0;
 
 using EntityHandler = void(*)(int);
 
-extern std::string g_levelPassword;
-extern std::string g_levelVictoryText;
-extern std::string g_levelHintText;
 
 constexpr int kEditorEntryStride = 0x1A;
 constexpr int kMaxLevelEntries = 32;
@@ -54,18 +51,7 @@ std::string g_nameInputBuffer;
 std::string g_statusLineText;
 
 static bool g_keyDownFlag = false;
-
-extern std::string g_levelPassword;
-extern std::string g_levelVictoryText;
-extern std::string g_levelHintText;
-
-// static constexpr int16_t kTargetRequiredState = 0x001F;
-// static constexpr int16_t kTargetClearedState  = 0x0020;
-
 static SDL_TimerID g_timerId = 0;
-
-// static constexpr std::int16_t TILE_SPAWN        = (std::uint16_t)0xFFFE;
-// static constexpr std::int16_t TILE_EXIT         = (std::uint16_t)0xFFF9;
 
 static void placeTileAndSpawnEntityIfEmpty_Core(
     int row,
@@ -178,10 +164,9 @@ static Uint32 SDLCALL PollTimerCallback(void* /*userdata*/, SDL_TimerID /*timerI
 {
     SDL_Event ev{};
     ev.type = g_pollEventType;
-    // tu peux remplir ev.user.data1/data2 si besoin, ou un code
     SDL_PushEvent(&ev);
 
-    return interval; // continuer avec le même interval
+    return interval;
 }
 
 void startPollingTimer()
@@ -191,18 +176,16 @@ void startPollingTimer()
         if (g_pollEventType == 0) {
             g_timerActive = false;
             g_timerId = 0;
-            return; // échec register
+            return;
         }
     }
 
-    // 2) Si déjà actif, on remplace proprement
     if (g_timerActive && g_timerId != 0) {
         SDL_RemoveTimer(g_timerId);
         g_timerId = 0;
         g_timerActive = false;
     }
 
-    // 3) Créer le timer
     g_timerId = SDL_AddTimer(kPollingIntervalMs, PollTimerCallback, nullptr);
     g_timerActive = (g_timerId != 0);
 }
@@ -246,17 +229,6 @@ void updateCountdownEntities()
     finalizeLevelVisuals();
 }
 
-// void moveAndRedrawEntity(int entityIndex, int newRow, int newCol)
-// {
-//     auto& e = g_gameState.entities[entityIndex];
-
-//     g_gameState.tileMap[e.row][e.col] = EntityType::EMPTY_CELL;
-//     e.row = newRow;
-//     e.col = newCol;
-//     g_gameState.tileMap[newRow][newCol] = (EntityType)entityIndex;
-//     renderEntity(entityIndex);
-// }
-
 void moveAndRedrawEntity(int entityIndex, int newRow, int newCol)
 {
     auto& e = g_gameState.entities[entityIndex];
@@ -271,81 +243,19 @@ void moveAndRedrawEntity(int entityIndex, int newRow, int newCol)
     renderEntity(entityIndex);
 }
 
-void showNewLevelDialog(SDL_Window* window)
+void showNewLevelDialog()
 {
-    g_window = window;
-    g_newLevelDialogOpen = true;
-    g_newLevelDialogResult = NewLevelDialogResult::None;
-    g_levelInput.clear();
+    std::string message =
+        "Starting a new level:\n\n"
+        "Level name:    " + g_levelPassword;
 
-    SDL_StartTextInput(g_window);
+    SDL_ShowSimpleMessageBox(
+        SDL_MESSAGEBOX_INFORMATION,
+        "Kye",
+        message.c_str(),
+        g_window
+    );
 }
-
-// bool tryMoveMagnet(int entityIndex)
-// {
-//     auto& s = g_gameState;
-
-//     int row = s.entities[entityIndex].row;
-//     int col = s.entities[entityIndex].col;
-
-//     // LEFT → move RIGHT (type 5)
-//     if (s.leftEntityMap[row][col] == -1)
-//     {
-//         int target = s.entityToLeft[row][col];
-
-//         if (target >= 0 &&
-//             target < g_activeSpawnerCount &&
-//             s.entities[target].entityType == EntityType::MAGNET_VERTICAL)
-//         {
-//             moveAndRedrawEntity(entityIndex, row, col + 1);
-//             return true;
-//         }
-//     }
-
-//     // RIGHT → move LEFT (type 5)
-//     if (s.rightEntityMap[row][col] == -1)
-//     {
-//         int target = s.entityToRight[row][col];
-
-//         if (target >= 0 &&
-//             target < g_activeSpawnerCount &&
-//             s.entities[target].entityType == EntityType::MAGNET_VERTICAL)
-//         {
-//             moveAndRedrawEntity(entityIndex, row, col - 1);
-//             return true;
-//         }
-//     }
-
-//     // DOWN → move DOWN (type 6)
-//     if (s.bottomEntityMap[row][col] == -1)
-//     {
-//         int target = s.entityBelow[row][col];
-
-//         if (target >= 0 &&
-//             target < g_activeSpawnerCount &&
-//             s.entities[target].entityType == EntityType::MAGNET_HORIZONTAL)
-//         {
-//             moveAndRedrawEntity(entityIndex, row + 1, col);
-//             return true;
-//         }
-//     }
-
-//     // UP → move UP (type 6)
-//     if (s.topEntityMap[row][col] == -1)
-//     {
-//         int target = s.entityAbove[row][col];
-
-//         if (target >= 0 &&
-//             target < g_activeSpawnerCount &&
-//             s.entities[target].entityType == EntityType::MAGNET_HORIZONTAL)
-//         {
-//             moveAndRedrawEntity(entityIndex, row - 1, col);
-//             return true;
-//         }
-//     }
-
-//     return false;
-// }
 
 int tryApplyMagneticDisplacement(int entityIndex)
 {
@@ -747,78 +657,6 @@ uint32_t pseudoRandomUpdate(uint32_t add)
 
     return seed;   // ← IMPORTANT
 }
-
-// void loadLevelRow(int row, const char* lineData)
-// {
-//     if (row >= GRID_ROWS) {
-//         cout << "Row exeeding..." << row << endl;
-//         return;
-//     }
-//     const char* linePtr = lineData;
-
-//     for (int col = 0; col < GRID_COLS; ++col)
-//         g_gameState.tileMap[row][col] = EntityType::EMPTY_CELL;
-    
-//     int col = 0;
-//     while (*linePtr && col < GRID_COLS)
-//     {
-//         char inputChar = *linePtr;
-//         EntityType entityCode = EntityType::EMPTY_CELL;
-//         uint8_t entityType = 0;
-//         int ok = decodeTile(&entityType, &entityCode, inputChar);
-
-//         if (ok)
-//         {
-//             switch (entityType)
-//             {
-//                 case 0: // empty
-//                     // cout << "Empty (" << row << ";" << col << ") =" << tileCode << endl;
-//                     g_gameState.tileMap[row][col] = EntityType::EMPTY_CELL;
-//                     break;
-
-//                 case 1:
-//                 {
-//                     cout << "FIXED TILE (" << row << ";" << col << ") char="
-//                         << inputChar << " code=" << (int)entityCode << endl;
-
-//                     g_gameState.tileMap[row][col] = entityCode;
-//                     break;
-//                 }
-//                 case 2: // entity
-//                 {
-//                     cout << "Mobile entity (" << row << ";" << col << ") =" << (int)entityCode << endl;
-//                     int changeIndex =
-//                         addEntity(entityCode, row, col);
-
-//                     if (changeIndex >= 0)
-//                     {
-//                         uint16_t rnd = pseudoRandomUpdate(0x8000);
-
-//                         uint16_t anim = divide64_unsigned(rnd);
-
-//                         g_gameState.entities[changeIndex].animFrame = anim;
-//                     }
-//                     break;
-//                 }
-
-//                 case 3: // player spawn
-//                 {
-//                     g_gameState.tileMap[row][col] = EntityType::KYE_LOCATION;
-//                     cout << "setting Kye (" << row << ";" << col << ") =" << (int)entityCode << endl;
-//                     currentRow = row;
-//                     currentCol = col;   
-
-//                     kyeRow = row;
-//                     kyeCol = col;
-//                     break;
-//                 }
-//             }
-//         }
-
-//         ++linePtr;
-//         ++col;
-//     }
-// }
 
 void loadLevelRow(int row, const char* lineData)
 {
@@ -1373,16 +1211,16 @@ void handleMagnetVertical(int entityIndex)
     const int row = s.entities[entityIndex].row;
     const int col = s.entities[entityIndex].col;
 
-    if (s.tileMap[row + 2][col] == EntityType::KYE_LOCATION &&
-        findEntityAt(row + 1, col) == -1)
+    if (s.tileMap[row + 1][col] == EntityType::EMPTY_CELL &&
+        s.tileMap[row + 2][col] == EntityType::KYE_LOCATION)
     {
         moveAndRedrawEntity(entityIndex, row + 1, col);
         handleUnknownEntityType(entityIndex);
         return;
     }
 
-    if (s.tileMap[row - 2][col] == EntityType::KYE_LOCATION &&
-        findEntityAt(row - 1, col) == -1)
+    if (s.tileMap[row - 1][col] == EntityType::EMPTY_CELL &&
+        s.tileMap[row - 2][col] == EntityType::KYE_LOCATION)
     {
         moveAndRedrawEntity(entityIndex, row - 1, col);
         handleUnknownEntityType(entityIndex);
@@ -1391,9 +1229,9 @@ void handleMagnetVertical(int entityIndex)
 
     {
         const int below = findEntityAt(row + 2, col);
-        if (below >= 0 &&
-            s.entities[below].entityType == EntityType::MAGNET_HORIZONTAL &&
-            findEntityAt(row + 1, col) == -1)
+        if (s.tileMap[row + 1][col] == EntityType::EMPTY_CELL &&
+            below >= 0 &&
+            s.entities[below].entityType == EntityType::MAGNET_HORIZONTAL)
         {
             moveAndRedrawEntity(below, row + 1, col);
             handleUnknownEntityType(entityIndex);
@@ -1403,9 +1241,9 @@ void handleMagnetVertical(int entityIndex)
 
     {
         const int above = findEntityAt(row - 2, col);
-        if (above >= 0 &&
-            s.entities[above].entityType == EntityType::MAGNET_HORIZONTAL &&
-            findEntityAt(row - 1, col) == -1)
+        if (s.tileMap[row - 1][col] == EntityType::EMPTY_CELL &&
+            above >= 0 &&
+            s.entities[above].entityType == EntityType::MAGNET_HORIZONTAL)
         {
             moveAndRedrawEntity(above, row - 1, col);
             handleUnknownEntityType(entityIndex);
@@ -1423,16 +1261,16 @@ void handleMagnetHorizontal(int entityIndex)
     const int row = s.entities[entityIndex].row;
     const int col = s.entities[entityIndex].col;
 
-    if (s.tileMap[row][col + 2] == EntityType::KYE_LOCATION &&
-        findEntityAt(row, col + 1) == -1)
+    if (s.tileMap[row][col + 1] == EntityType::EMPTY_CELL &&
+        s.tileMap[row][col + 2] == EntityType::KYE_LOCATION)
     {
         moveAndRedrawEntity(entityIndex, row, col + 1);
         handleUnknownEntityType(entityIndex);
         return;
     }
 
-    if (s.tileMap[row][col - 2] == EntityType::KYE_LOCATION &&
-        findEntityAt(row, col - 1) == -1)
+    if (s.tileMap[row][col - 1] == EntityType::EMPTY_CELL &&
+        s.tileMap[row][col - 2] == EntityType::KYE_LOCATION)
     {
         moveAndRedrawEntity(entityIndex, row, col - 1);
         handleUnknownEntityType(entityIndex);
@@ -1441,9 +1279,9 @@ void handleMagnetHorizontal(int entityIndex)
 
     {
         const int right = findEntityAt(row, col + 2);
-        if (right >= 0 &&
-            s.entities[right].entityType == EntityType::MAGNET_VERTICAL &&
-            findEntityAt(row, col + 1) == -1)
+        if (s.tileMap[row][col + 1] == EntityType::EMPTY_CELL &&
+            right >= 0 &&
+            s.entities[right].entityType == EntityType::MAGNET_VERTICAL)
         {
             moveAndRedrawEntity(right, row, col + 1);
             handleUnknownEntityType(entityIndex);
@@ -1453,9 +1291,9 @@ void handleMagnetHorizontal(int entityIndex)
 
     {
         const int left = findEntityAt(row, col - 2);
-        if (left >= 0 &&
-            s.entities[left].entityType == EntityType::MAGNET_VERTICAL &&
-            findEntityAt(row, col - 1) == -1)
+        if (s.tileMap[row][col - 1] == EntityType::EMPTY_CELL &&
+            left >= 0 &&
+            s.entities[left].entityType == EntityType::MAGNET_VERTICAL)
         {
             moveAndRedrawEntity(left, row, col - 1);
             handleUnknownEntityType(entityIndex);
@@ -1559,8 +1397,8 @@ int handleGameClick(int x, int y)
     {
         tickLevelFlow();
 
-        const int rowIndex = y / cellHeight;
-        const int colIndex = x / cellWidth;
+        const int rowIndex = (y - gridOriginY) / cellHeight;
+        const int colIndex = (x - gridOriginX) / cellWidth;
 
         handleKyeMarkerBlock(rowIndex, colIndex);
 
@@ -1573,8 +1411,8 @@ int handleGameClick(int x, int y)
 
     if (interactionMode == 1)
     {
-        const int rowIndex = y / cellHeight;
-        const int colIndex = x / cellWidth;
+        const int rowIndex = (y - gridOriginY) / cellHeight;
+        const int colIndex = (x - gridOriginX) / cellWidth;
 
         handleClickOnGridCell(rowIndex, colIndex);
         initializeRendererIfNeeded();
@@ -1971,9 +1809,53 @@ bool handleMainMenuCommand(MenuCommand cmd)
             return true;
         }
 
-        case MenuCommand::GotoLevel:
+         case MenuCommand::GotoLevel:
         {
-            showGotoLevelDialog();
+            if (g_interactionMode != GameInteractionMode::PLAY_MODE)
+            {
+                return true;
+            }
+
+            g_timerActive = false;
+
+            const char* input = tinyfd_inputBox(
+                "Goto Level",
+                "Enter level password:",
+                ""
+            );
+
+            if (input == nullptr)
+            {
+                g_timerActive = true;
+                return true;
+            }
+
+            g_nameInputBuffer = input;
+
+            strupr16(g_nameInputBuffer.data());
+
+            const int matchedLevel = findMatchingLineInFile(g_nameInputBuffer);
+
+            if (matchedLevel > 0)
+            {
+                levelIndex = matchedLevel;
+                loadLevelByIndex(levelIndex);
+
+                isLeftMouseDragActive = 0;
+                clearStatusLine(g_statusLineBuffer);
+
+                invalidateWindow();
+                updateWindow();
+            }
+            else
+            {
+                if (!g_nameInputBuffer.empty())
+                {
+                    showMessage("Goto Level", "Level not found");
+                }
+            }
+
+            g_timerActive = true;
             return true;
         }
 
@@ -2114,8 +1996,8 @@ void handlePendingInteractionFinalize(int x, int y)
 
     SDL_SetCursor(g_cursorArrow);
 
-    const int rowIndex = y / cellHeight;
-    const int colIndex = x / cellWidth;
+    const int rowIndex = (y - gridOriginY) / cellHeight;
+    const int colIndex = (x - gridOriginX) / cellWidth;
 
     if (isLeftMouseDragActive == 0)
     {
@@ -2570,7 +2452,7 @@ int tickLevelFlow()
         }
 
         loadLevelByIndex(levelIndex);
-        showNewLevelDialog(g_windowHandle2);
+        showNewLevelDialog();
 
         isLeftMouseDragActive = 0;
         clearStatusLine(g_statusLineBuffer);
@@ -2735,15 +2617,22 @@ void handlePaintOrRenderRequest()
 {
     if (g_renderer == nullptr)
         return;
+
     if (g_hasDeviceContext != 0)
     {
         advanceToNextLevelOrBlock();
     }
+
     g_hasDeviceContext = 1;
+
     SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
     SDL_RenderClear(g_renderer);
+
     initializeLayoutRects();
+
     renderHudAndFrame();
+    drawMenuBar();
+
     g_hasDeviceContext = 0;
 }
 
@@ -2783,6 +2672,13 @@ void handleEvent(const SDL_Event& e)
             const int x = static_cast<int>(e.button.x);
             const int y = static_cast<int>(e.button.y);
 
+            if (handleMenuMouseDown(x, y))
+            {
+                handlePaintOrRenderRequest();
+                SDL_RenderPresent(g_renderer);
+                return;
+            }
+
             if (e.button.button == SDL_BUTTON_LEFT)
             {
                 if (e.button.clicks >= 2)
@@ -2817,7 +2713,13 @@ void handleEvent(const SDL_Event& e)
             const int x = static_cast<int>(e.motion.x);
             const int y = static_cast<int>(e.motion.y);
 
-            handlePendingInteractionFinalize(x, y);
+            handleMenuMouseMove(x, y);
+
+            if (g_activeMenu == ActiveMenu::None)
+            {
+                handlePendingInteractionFinalize(x, y);
+            }
+
             return;
         }
 
@@ -2852,15 +2754,12 @@ std::int16_t handleNotificationOrCallbackByCode(uint16_t eventCode)
     if (static_cast<uint16_t>(slotIndex) == 0xFFFFu) {
         return 1;
     }
-
     const uint16_t slotWord = g_notificationHandlerSlotWord[static_cast<uint16_t>(slotIndex)];
 
-    // slotWord == 1 => do nothing
     if (slotWord == 1u) {
         return 0;
     }
 
-    // slotWord == 0 => fallback behavior
     if (slotWord == 0u) {
         if (eventCode == 8u) {
             copyMappedStringForCode(0x008Cu);
@@ -2870,7 +2769,6 @@ std::int16_t handleNotificationOrCallbackByCode(uint16_t eventCode)
         return 0;
     }
 
-    // slotWord != 0 && != 1 => treat as callback pointer
     g_notificationHandlerSlotWord[static_cast<uint16_t>(slotIndex)] = 0;
 
     const uint16_t handlerParam = static_cast<uint16_t>(g_notificationHandlerParam[static_cast<uint16_t>(slotIndex)]);
@@ -2931,97 +2829,6 @@ void advanceKyeAndCarryTile(int stepRow, int stepCol)
 
     runTileSparkleEffect(0);
 }
-
-// int processKyeCollision(int stepRow, int stepCol)
-// {
-//     if ((stepRow != 0 && stepCol != 0) || (stepRow == 0 && stepCol == 0))
-//         return 0;
-
-//     int newRow = currentRow + stepRow;
-//     int newCol = currentCol + stepCol;
-
-//     EntityType target = g_gameState.tileMap[newRow][newCol];
-
-//     if (target == EntityType::EMPTY_CELL)
-//     {
-//         advanceKyeAndCarryTile(stepRow, stepCol);
-//         return 1;
-//     }
-
-//     if (target == EntityType::BREAKABLE_BRICK)
-//     {
-//         advanceKyeAndCarryTile(stepRow, stepCol);
-//         selectedObjectIndex = 0xFFFF;
-//         return 1;
-//     }
-
-//     if (target == EntityType::DIAMOND)
-//     {
-//         advanceKyeAndCarryTile(stepRow, stepCol);
-//         selectedObjectIndex = 0xFFFF;
-
-//         if (isLeftMouseDragActive > 0)
-//             --isLeftMouseDragActive;
-
-//         onDiamondCollected();
-//         renderLivesAndLevelInfo();
-//         return 1;
-//     }
-
-//     if ((int)target >= 0 && (int)target < g_gameState.entities.size())
-//     {
-//         int entityIndex = (int)target;
-//         EntityInfo& e = g_gameState.entities[entityIndex];
-
-//         if (e.entityType == EntityType::Lava)
-//         {
-//             --remainingLives;
-//             updateLivesDisplay();
-//             renderLivesAndLevelInfo();
-//             return 0;
-//         }
-
-//         if (e.entityType == EntityType::EMPTY_CELL)
-//             return 0;
-
-//         int pushRow = e.row + stepRow;
-//         int pushCol = e.col + stepCol;
-
-//         if (pushRow < 0 || pushRow >= GRID_ROWS ||
-//             pushCol < 0 || pushCol >= GRID_COLS)
-//             return 0;
-
-//         EntityType pushTarget = g_gameState.tileMap[pushRow][pushCol];
-
-//         if (pushTarget == EntityType::EMPTY_CELL)
-//         {
-//             moveAndRedrawEntity(entityIndex, pushRow, pushCol);
-//             advanceKyeAndCarryTile(stepRow, stepCol);
-//             return 1;
-//         }
-
-//         if ((int)pushTarget >= 0 && (int)pushTarget < g_activeSpawnerCount)
-//         {
-//             int targetEntityIndex = (int)pushTarget;
-//             EntityInfo& targetEntity = g_gameState.entities[targetEntityIndex];
-
-//             if (targetEntity.entityType == EntityType::Lava)
-//             {
-//                 if (!destroyEntityIfFallsIntoLava(entityIndex, pushRow, pushCol))
-//                 {
-//                     moveAndRedrawEntity(entityIndex, pushRow, pushCol);
-//                 }
-
-//                 advanceKyeAndCarryTile(stepRow, stepCol);
-//                 return 1;
-//             }
-//         }
-
-//         return 0;
-//     }
-
-//     return 0;
-// }
 
 int processKyeCollision(int stepRow, int stepCol)
 {
@@ -4025,18 +3832,6 @@ void handleRoundedArrowDown(int entityIndex)
         return;
     }
 
-    // FIX 2: glide on TOP_LEFT_ROUNDED_WALL => RIGHT
-    if (obstacleBelow == static_cast<int16_t>(EntityType::TOP_LEFT_ROUND_WALL))
-    {
-        if (col + 1 < GRID_COLS &&
-            s.tileMap[row][col + 1] == EntityType::EMPTY_CELL)
-        {
-            moveAndRedrawEntity(entityIndex, row, col + 1);
-            handleUnknownEntityType(entityIndex);
-            return;
-        }
-    }
-
     bool isRoundedArrowBelow = false;
     bool isRoundedPushableBelow = false;
 
@@ -4069,9 +3864,7 @@ void handleRoundedArrowDown(int entityIndex)
     const bool allowLeft =
         leftCellsEmpty &&
         (
-            obstacleBelow == static_cast<int16_t>(EntityType::TOP_RIGHT_ROUND_WALL) ||
             obstacleBelow == static_cast<int16_t>(EntityType::TOP_ROUND_WALL) ||
-            obstacleBelow == static_cast<int16_t>(EntityType::RIGHT_ROUND_WALL) ||
             obstacleBelow == static_cast<int16_t>(EntityType::LEFT_ROUND_WALL) ||
             obstacleBelow == static_cast<int16_t>(EntityType::TOP_LEFT_ROUND_WALL) ||
             isRoundedArrowBelow ||
@@ -4081,9 +3874,7 @@ void handleRoundedArrowDown(int entityIndex)
     const bool allowRight =
         rightCellsEmpty &&
         (
-            obstacleBelow == static_cast<int16_t>(EntityType::TOP_LEFT_ROUND_WALL) ||
             obstacleBelow == static_cast<int16_t>(EntityType::TOP_ROUND_WALL) ||
-            obstacleBelow == static_cast<int16_t>(EntityType::LEFT_ROUND_WALL) ||
             obstacleBelow == static_cast<int16_t>(EntityType::RIGHT_ROUND_WALL) ||
             obstacleBelow == static_cast<int16_t>(EntityType::TOP_RIGHT_ROUND_WALL) ||
             isRoundedArrowBelow ||
@@ -4179,17 +3970,6 @@ void handleRoundedArrowLeft(int entityIndex)
         return;
     }
 
-    if (obstacleLeft == static_cast<int16_t>(EntityType::TOP_RIGHT_ROUND_WALL))
-    {
-        if (row + 1 < GRID_ROWS &&
-            s.tileMap[row + 1][col] == EntityType::EMPTY_CELL)
-        {
-            moveAndRedrawEntity(entityIndex, row + 1, col);
-            handleUnknownEntityType(entityIndex);
-            return;
-        }
-    }
-
     bool isRoundedArrowLeft = false;
     bool isRoundedPushableLeft = false;
 
@@ -4222,9 +4002,8 @@ void handleRoundedArrowLeft(int entityIndex)
     const bool allowUp =
         upCellsEmpty &&
         (
-            obstacleLeft == static_cast<int16_t>(EntityType::BOTTOM_RIGHT_ROUND_WALL) ||
             obstacleLeft == static_cast<int16_t>(EntityType::RIGHT_ROUND_WALL) ||
-            obstacleLeft == static_cast<int16_t>(EntityType::BOTTOM_ROUND_WALL) ||
+            obstacleLeft == static_cast<int16_t>(EntityType::TOP_ROUND_WALL) ||
             obstacleLeft == static_cast<int16_t>(EntityType::TOP_RIGHT_ROUND_WALL) ||
             isRoundedArrowLeft ||
             isRoundedPushableLeft
@@ -4233,9 +4012,8 @@ void handleRoundedArrowLeft(int entityIndex)
     const bool allowDown =
         downCellsEmpty &&
         (
-            obstacleLeft == static_cast<int16_t>(EntityType::TOP_RIGHT_ROUND_WALL) ||
             obstacleLeft == static_cast<int16_t>(EntityType::RIGHT_ROUND_WALL) ||
-            obstacleLeft == static_cast<int16_t>(EntityType::TOP_ROUND_WALL) ||
+            obstacleLeft == static_cast<int16_t>(EntityType::BOTTOM_ROUND_WALL) ||
             obstacleLeft == static_cast<int16_t>(EntityType::BOTTOM_RIGHT_ROUND_WALL) ||
             isRoundedArrowLeft ||
             isRoundedPushableLeft

@@ -215,3 +215,4 @@ int g_entryColTable[1] = {0};
 EditorEntry g_editorEntries[256] = {};
 int g_levelJustLoadedFlag = 1;
 bool isLevelCompleted = false;
+int  levelCount   = 1;

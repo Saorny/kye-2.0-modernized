@@ -89,7 +89,6 @@ using FileCallback = void(*)();
 extern FileCallback validateBuffer;
 
 extern int  fileAccessEnabled;
-extern int  totalBlockCount;
 extern char lastWrittenChar;
 
 // String resources (ids -> string)

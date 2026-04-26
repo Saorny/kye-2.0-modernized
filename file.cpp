@@ -68,7 +68,8 @@ static constexpr int kOff_0x23  = 0x23;
 static constexpr int kOff_0x78  = 0x78;
 static constexpr int kBlockSize = kOff_0xCD + (kLines * kLineSize);
 
-int findMatchingLineInFile(const char* targetString) {
+int findMatchingLineInFile(const std::string& target)
+{
     if (fileAccessEnabled == 0)
         return -1;
 
@@ -76,27 +77,27 @@ int findMatchingLineInFile(const char* targetString) {
     if (!file)
         return -1;
 
-    if (resetAndSeekFile(file, 0) != 0) {
-        cleanFile(file);
-        return -1;
-    }
+    resetAndSeekFile(file, 0);
 
-    char outBuf[0x50] = {0};  // 0x4F + 1
+    char outBuf[0x50] = {};
     readLineToBuffer(file, outBuf, 0x4F);
 
-    totalBlockCount = static_cast<uint16_t>(parseSignedDecimalString(outBuf));
+    levelCount = parseSignedDecimalString(outBuf);
 
     int currentIndex = 1;
 
-    while (currentIndex <= totalBlockCount) {
-        char entryBuffer[0x400] = {0};  // var_38E
+    while (currentIndex <= levelCount)
+    {
+        char entryBuffer[0x38E] = {};
 
-        if (loadLevelMetaData(file, entryBuffer) < 0) {
+        if (loadLevelMetaData(file, entryBuffer) < 0)
+        {
             cleanFile(file);
             return -1;
         }
 
-        if (strcmp(entryBuffer, targetString) == 0) {
+        if (std::strcmp(entryBuffer, target.c_str()) == 0)
+        {
             cleanFile(file);
             return currentIndex;
         }

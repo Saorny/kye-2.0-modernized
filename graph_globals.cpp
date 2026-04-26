@@ -42,3 +42,4 @@ SDL_Texture* g_kyeTexture = nullptr;
 bool g_needsRedraw = false;
 char stringBuffer[512]{};
 
+int MENU_BAR_HEIGHT = 24;
