@@ -117,15 +117,15 @@ enum class EntityType : std::uint16_t
     DEFLECTOR_RIGHT = 0x0015,
     ROUNDED_PUSHABLE_BRICK = 0x0016,
 
-    UnknownA1 = 0x0017,
-    UnknownA2 = 0x0018,
-    UnknownA3 = 0x0019,
-    UnknownA4 = 0x001A,
+    SQUARE_ARROW_DISPENSER_RIGHT = 0x0017,
+    SQUARE_ARROW_DISPENSER_UP = 0x0018,
+    SQUARE_ARROW_DISPENSER_LEFT = 0x0019,
+    SQUARE_ARROW_DISPENSER_DOWN = 0x001A,
 
-    DISPENSER1 = 0x001B,
-    DISPENSER2 = 0x001C,
-    DISPENSER3 = 0x001D,
-    DISPENSER4 = 0x001E,
+    ROUNDED_ARROW_DISPENSER_RIGHT = 0x001B,
+    ROUNDED_ARROW_DISPENSER_UP = 0x001C,
+    ROUNDED_ARROW_DISPENSER_LEFT = 0x001D,
+    ROUNDED_ARROW_DISPENSER_DOWN = 0x001E,
 
     Lava = 0x001F,
     Lava2 = 0x0020,
@@ -267,15 +267,15 @@ constexpr std::array<EntityMappingEntry, 60> ENTITY_MAPPINGS = {{
     { EntityClass::Mobile, 0x00, EntityType::DEFLECTOR_RIGHT, 'c' },
     { EntityClass::Mobile, 0x00, EntityType::ROUNDED_PUSHABLE_BRICK, 'B' },
 
-    { EntityClass::Mobile, 0x00, EntityType::UnknownA1, 'A' },
-    { EntityClass::Mobile, 0x00, EntityType::UnknownA2, 'A' },
-    { EntityClass::Mobile, 0x00, EntityType::UnknownA3, 'A' },
-    { EntityClass::Mobile, 0x00, EntityType::UnknownA4, 'A' },
+    { EntityClass::Mobile, 0x00, EntityType::SQUARE_ARROW_DISPENSER_RIGHT, 'A' },
+    { EntityClass::Mobile, 0x00, EntityType::SQUARE_ARROW_DISPENSER_UP, 'A' },
+    { EntityClass::Mobile, 0x00, EntityType::SQUARE_ARROW_DISPENSER_LEFT, 'A' },
+    { EntityClass::Mobile, 0x00, EntityType::SQUARE_ARROW_DISPENSER_DOWN, 'A' },
 
-    { EntityClass::Mobile, 0x00, EntityType::DISPENSER1, 'F' },
-    { EntityClass::Mobile, 0x00, EntityType::DISPENSER2, 'F' },
-    { EntityClass::Mobile, 0x00, EntityType::DISPENSER3, 'F' },
-    { EntityClass::Mobile, 0x00, EntityType::DISPENSER4, 'F' },
+    { EntityClass::Mobile, 0x00, EntityType::ROUNDED_ARROW_DISPENSER_RIGHT, 'F' },
+    { EntityClass::Mobile, 0x00, EntityType::ROUNDED_ARROW_DISPENSER_UP, 'F' },
+    { EntityClass::Mobile, 0x00, EntityType::ROUNDED_ARROW_DISPENSER_LEFT, 'F' },
+    { EntityClass::Mobile, 0x00, EntityType::ROUNDED_ARROW_DISPENSER_DOWN, 'F' },
 
     { EntityClass::Mobile, 0x00, EntityType::Lava, 'H' },
     { EntityClass::Mobile, 0x00, EntityType::Lava2, 'H' },
@@ -544,6 +544,7 @@ int tickLevelFlow();
 void animateDiamonds();
 void handlePaintOrRenderRequest();
 void updateLevelVisualsAndAnimations();
+void animateLava();
 
 extern std::string g_levelHintText;
 extern std::string g_levelPassword;

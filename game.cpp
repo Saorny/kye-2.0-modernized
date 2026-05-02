@@ -27,7 +27,6 @@ int hasLevelTransition = 0;
 int selectedObjectIndex = -1;
 bool g_timerActive = false;
 bool g_optionToggleFlag = false;
-int g_oneWayAnimPhase = 1;
 uint16_t g_activeSpawnerCount = 0;
 std::string g_helpContextFile = "kyehelp.hlp";
 
@@ -655,7 +654,7 @@ uint32_t pseudoRandomUpdate(uint32_t add)
     randomSeedHigh = static_cast<uint16_t>(seed >> 16);
     randomSeedLow  = static_cast<uint16_t>(seed);
 
-    return seed;   // ← IMPORTANT
+    return seed;
 }
 
 void loadLevelRow(int row, const char* lineData)
@@ -2011,48 +2010,6 @@ void handlePendingInteractionFinalize(int x, int y)
     g_hasPendingModal = 1;
 }
 
-void animateLava()
-{
-    if (frameCounter % 5 != 0)
-        return;
-
-    for (std::int16_t i = 0; i < g_activeSpawnerCount && i < g_gameState.entities.size(); ++i)
-    {
-        EntityInfo& entity = g_gameState.entities[i];
-
-        const int dstY = entity.row * cellHeight;
-        const int dstX = entity.col * cellWidth;
-
-        const int srcX = 0x40 + (entity.animFrame << 4);
-
-        if (entity.entityType == EntityType::Lava) // 0x1F
-        {
-            g_blockSheet.blit16(
-                dstX,
-                dstY,
-                srcX,
-                0x80
-            );
-
-            entity.animFrame = (entity.animFrame + 1) % 4;
-        }
-        else if (entity.entityType == EntityType::Lava2) // 0x20
-        {
-            g_blockSheet.blit16(
-                dstX,
-                dstY,
-                srcX,
-                0x90
-            );
-
-            if (entity.animFrame == 3)
-                entity.entityType = EntityType::Lava;
-
-            entity.animFrame = (entity.animFrame + 1) % 4;
-        }
-    }
-}
-
 void drainPendingEvents() {}
 
 void animateDiamonds()
@@ -2091,59 +2048,6 @@ void animateDiamonds()
     }
 }
 
-void animateOneWayTilesEvery4Frames()
-{
-    if (frameCounter % 4 != 0)
-        return;
-
-    int spriteOffsetX;
-
-    if (g_oneWayAnimPhase)
-    {
-        spriteOffsetX = 0;
-        g_oneWayAnimPhase = 0;
-    }
-    else
-    {
-        spriteOffsetX = 16;
-        g_oneWayAnimPhase = 1;
-    }
-
-    for (int row = 0; row < GRID_ROWS; row++)
-    {
-        for (int col = 0; col < GRID_COLS; col++)
-        {
-            EntityType tile = g_gameState.tileMap[row][col];
-
-            int spriteY = -1;
-
-            if (tile == EntityType::ONE_WAY_LEFT_TO_RIGHT_PORTAL ||
-                tile == EntityType::ONE_WAY_RIGHT_TO_LEFT_PORTAL)
-            {
-                spriteY = 0xE0;
-            }
-            else if (tile == EntityType::ONE_WAY_TOP_TO_BOTTOM ||
-                     tile == EntityType::ONE_WAY_BOTTOM_TO_TOP)
-            {
-                spriteY = 0xD0;
-            }
-
-            if (spriteY == -1)
-                continue;
-
-            int dstX = col * cellWidth;
-            int dstY = row * cellHeight;
-
-            g_blockSheet.blit16(
-                dstX,
-                dstY,
-                spriteOffsetX,
-                spriteY
-            );
-        }
-    }
-}
-
 void def_5AE1_tryPlaceAndSpawn(int row, int col, EntityType type, uint16_t* spawnCounterPtr)
 {
     placeTileAndSpawnEntityIfEmpty_Core(row, col, type, spawnCounterPtr);
@@ -2166,7 +2070,7 @@ inline void incrementEntityType(EntityType& type)
     );
 }
 
-void tickSpawnersEvery7Frames()
+void tickArrowDispensersEvery7Frames()
 {
     if (frameCounter % 7 != 0)
     {
@@ -2181,62 +2085,109 @@ void tickSpawnersEvery7Frames()
         int row = entity.row;
         int col = entity.col;
 
-        entity.animFrame++;
-
         int targetRow = row;
         int targetCol = col;
-        EntityType entityType = EntityType::EMPTY_CELL;
+        EntityType spawnType = EntityType::EMPTY_CELL;
 
-        switch(entity.entityType)
+        if (entity.entityType >= EntityType::SQUARE_ARROW_DISPENSER_RIGHT &&
+            entity.entityType <= EntityType::SQUARE_ARROW_DISPENSER_DOWN)
         {
-            case EntityType::UnknownA1:
-                entityType = EntityType::SQUARE_ARROW_RIGHT;
-                targetRow = row + 1;
-                break;
+            entity.entityType = static_cast<EntityType>(
+                static_cast<int>(entity.entityType) + 1
+            );
 
-            case EntityType::UnknownA2:
-                entityType = EntityType::SQUARE_ARROW_UP;
-                targetCol = col - 1;
-                break;
+            if (entity.entityType > EntityType::SQUARE_ARROW_DISPENSER_DOWN)
+                entity.entityType = EntityType::SQUARE_ARROW_DISPENSER_RIGHT;
 
-            case EntityType::UnknownA3:
-                entityType = EntityType::SQUARE_ARROW_LEFT;
-                targetRow = row - 1;
-                break;
+            moveAndRedrawEntity(i, row, col);
 
-            case EntityType::UnknownA4:
-                entityType = EntityType::SQUARE_ARROW_DOWN;
-                targetCol = col + 1;
-                break;
-
-            case EntityType::DISPENSER1:
-                entityType = EntityType::ROUNDED_ARROW_RIGHT;
-                targetRow = row + 1;
-                break;
-
-            case EntityType::DISPENSER2:
-                entityType = EntityType::ROUNDED_ARROW_UP;
-                targetCol = col - 1;
-                break;
-
-            case EntityType::DISPENSER3:
-                entityType = EntityType::ROUNDED_ARROW_LEFT;
-                targetRow = row - 1;
-                break;
-
-            case EntityType::DISPENSER4:
-                entityType = EntityType::ROUNDED_ARROW_DOWN;
-                targetCol = col + 1;
-                break;
-
-            default:
+            if (entity.animFrame < entity.col)
+            {
+                entity.animFrame++;
                 continue;
+            }
+
+            switch (entity.entityType)
+            {
+                case EntityType::SQUARE_ARROW_DISPENSER_RIGHT:
+                    spawnType = EntityType::SQUARE_ARROW_RIGHT;
+                    targetRow = row + 1;
+                    break;
+
+                case EntityType::SQUARE_ARROW_DISPENSER_UP:
+                    spawnType = EntityType::SQUARE_ARROW_UP;
+                    targetCol = col - 1;
+                    break;
+
+                case EntityType::SQUARE_ARROW_DISPENSER_LEFT:
+                    spawnType = EntityType::SQUARE_ARROW_LEFT;
+                    targetRow = row - 1;
+                    break;
+
+                case EntityType::SQUARE_ARROW_DISPENSER_DOWN:
+                    spawnType = EntityType::SQUARE_ARROW_DOWN;
+                    targetCol = col + 1;
+                    break;
+
+                default:
+                    continue;
+            }
+        }
+        else if (entity.entityType >= EntityType::ROUNDED_ARROW_DISPENSER_RIGHT &&
+                 entity.entityType <= EntityType::ROUNDED_ARROW_DISPENSER_DOWN)
+        {
+            entity.entityType = static_cast<EntityType>(
+                static_cast<int>(entity.entityType) + 1
+            );
+
+            if (entity.entityType > EntityType::ROUNDED_ARROW_DISPENSER_DOWN)
+                entity.entityType = EntityType::ROUNDED_ARROW_DISPENSER_RIGHT;
+
+            moveAndRedrawEntity(i, row, col);
+
+            if (entity.animFrame < entity.col)
+            {
+                entity.animFrame++;
+                continue;
+            }
+
+            switch (entity.entityType)
+            {
+                case EntityType::ROUNDED_ARROW_DISPENSER_RIGHT:
+                    spawnType = EntityType::ROUNDED_ARROW_RIGHT;
+                    targetRow = row + 1;
+                    break;
+
+                case EntityType::ROUNDED_ARROW_DISPENSER_UP:
+                    spawnType = EntityType::ROUNDED_ARROW_UP;
+                    targetCol = col - 1;
+                    break;
+
+                case EntityType::ROUNDED_ARROW_DISPENSER_LEFT:
+                    spawnType = EntityType::ROUNDED_ARROW_LEFT;
+                    targetRow = row - 1;
+                    break;
+
+                case EntityType::ROUNDED_ARROW_DISPENSER_DOWN:
+                    spawnType = EntityType::ROUNDED_ARROW_DOWN;
+                    targetCol = col + 1;
+                    break;
+
+                default:
+                    continue;
+            }
+        }
+        else
+        {
+            continue;
         }
 
         if (g_gameState.tileMap[targetRow][targetCol] == EntityType::EMPTY_CELL)
         {
-            int entityIndex = addEntity(
-                entityType,
+            entity.animFrame = 0;
+
+            const int entityIndex = addEntity(
+                spawnType,
                 targetRow,
                 targetCol
             );
@@ -2282,9 +2233,51 @@ void updateLevelVisualsAndAnimations()
 {
     animateMonsters();
     animateDiamonds();
-    animateOneWayTilesEvery4Frames();
-    tickSpawnersEvery7Frames();
+    // animateOneWayTilesEvery4Frames();
+    tickArrowDispensersEvery7Frames();
     animateLava();
+}
+
+void animateLava()
+{
+    if (frameCounter % 5 != 0)
+        return;
+
+    for (std::int16_t i = 0; i < g_activeSpawnerCount && i < g_gameState.entities.size(); ++i)
+    {
+        EntityInfo& entity = g_gameState.entities[i];
+
+        if (entity.entityType != EntityType::Lava &&
+            entity.entityType != EntityType::Lava2)
+            continue;
+
+        const int dstX = gridOriginX + entity.col * cellWidth;
+        const int dstY = gridOriginY + entity.row * cellHeight;
+
+        const int srcX = 8 * 16;
+        const int srcY = (4 + entity.animFrame) * 16;
+
+        SDL_FRect src{
+            (float)srcX,
+            (float)srcY,
+            16.0f,
+            16.0f
+        };
+
+        SDL_FRect dst{
+            (float)dstX,
+            (float)dstY,
+            16.0f,
+            16.0f
+        };
+
+        SDL_RenderTexture(g_renderer, g_sheetMobiles.tex, &src, &dst);
+
+        if (entity.entityType == EntityType::Lava2 && entity.animFrame == 3)
+            entity.entityType = EntityType::Lava;
+
+        entity.animFrame = (entity.animFrame + 1) % 4;
+    }
 }
 
 void animateMonsters()

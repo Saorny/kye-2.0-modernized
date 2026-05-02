@@ -135,6 +135,8 @@ extern int uiRightX;
 extern char hudMessageText[256];
 extern TTF_Font* g_font;
 
+extern int g_oneWayAnimPhase;
+
 extern int MENU_BAR_HEIGHT;
 
 int showFileMessage(const char* message);

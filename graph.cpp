@@ -409,7 +409,7 @@ void renderEntity(int entityIndex)
     if (type >= EntityType::EnemyPropeller && type <= EntityType::EnemyPropellerRound)
     {
         srcX = static_cast<float>(type) * 0x10;
-         srcY = 16.0f;
+        srcY = 16.0f;
     }
     else if (type >= EntityType::COUNTDOWN_0 && type <= EntityType::COUNTDOWN_9)
     {
@@ -419,13 +419,29 @@ void renderEntity(int entityIndex)
     }
     else if (type == EntityType::Lava)
     {
-        srcX = static_cast<float>((entity.animFrame & 3) * 16);
-        srcY = 0x80;
+        srcX = 8.0f * 16.0f;
+        srcY = 4.0f * 16.0f;
     }
     else if (type == EntityType::Lava2)
     {
-        srcX = static_cast<float>((entity.animFrame & 3) * 16);
-        srcY = 0x90;
+        srcX = 9.0f * 16.0f;
+        srcY = 4.0f * 16.0f;
+    }
+    else if (type >= EntityType::SQUARE_ARROW_DISPENSER_RIGHT && type <= EntityType::SQUARE_ARROW_DISPENSER_DOWN)
+    {
+        const int index =
+            static_cast<int>(type) - static_cast<int>(EntityType::SQUARE_ARROW_DISPENSER_RIGHT);
+
+        srcX = index * 16.0f;
+        srcY = static_cast<float>(4) * 16.0f;
+    }
+    else if (type >= EntityType::ROUNDED_ARROW_DISPENSER_RIGHT && type <= EntityType::ROUNDED_ARROW_DISPENSER_DOWN)
+    {
+        const int index =
+            static_cast<int>(type) - static_cast<int>(EntityType::ROUNDED_ARROW_DISPENSER_RIGHT);
+
+        srcX = (4.0f  + index) * 16.0f;
+        srcY = static_cast<float>(4) * 16.0f;
     }
     else
     {
@@ -548,7 +564,7 @@ void renderFullWallLayer()
                 continue;
             }
 
-            if (tileValue >= EntityType::ONE_WAY_TOP_TO_BOTTOM)
+            if (tileValue >= EntityType::ONE_WAY_BOTTOM_TO_TOP)
             {
                 renderStaticObjects(row, col, tileValue);
             }
@@ -566,11 +582,66 @@ void renderAllEntities()
     }
 }
 
+
+void animateOneWayTilesEvery4Frames()
+{
+    if (!g_renderer || !g_sheetStatics.tex)
+        return;
+
+    if (frameCounter % 4 == 0)
+    {
+        g_oneWayAnimPhase = (g_oneWayAnimPhase == 0) ? 1 : 0;
+    }
+
+    const float phaseY = (g_oneWayAnimPhase != 0) ? 16.0f : 0.0f;
+
+    for (int row = 0; row < GRID_ROWS; ++row)
+    {
+        for (int col = 0; col < GRID_COLS; ++col)
+        {
+            const EntityType tile = g_gameState.tileMap[row][col];
+
+            float srcX = -1.0f;
+
+            if (tile == EntityType::ONE_WAY_LEFT_TO_RIGHT_PORTAL ||
+                tile == EntityType::ONE_WAY_RIGHT_TO_LEFT_PORTAL)
+            {
+                srcX = 0xE0;
+            }
+            else if (tile == EntityType::ONE_WAY_TOP_TO_BOTTOM ||
+                     tile == EntityType::ONE_WAY_BOTTOM_TO_TOP)
+            {
+                srcX = 0xD0;
+            }
+
+            if (srcX < 0.0f)
+                continue;
+
+            SDL_FRect srcRect{
+                srcX,
+                phaseY,
+                16.0f,
+                16.0f
+            };
+
+            SDL_FRect dstRect{
+                static_cast<float>(gridOriginX + col * cellWidth),
+                static_cast<float>(gridOriginY + row * cellHeight),
+                static_cast<float>(cellWidth),
+                static_cast<float>(cellHeight)
+            };
+
+            SDL_RenderTexture(g_renderer, g_sheetStatics.tex, &srcRect, &dstRect);
+        }
+    }
+}
+
 void renderAllObjects()
 {
     if (g_interactionMode == GameInteractionMode::PLAY_MODE)
     {
         renderFullWallLayer();
+        animateOneWayTilesEvery4Frames();
         renderAllEntities();
         if (isPendingKyeMarkerDraw)
         {

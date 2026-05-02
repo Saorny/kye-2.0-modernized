@@ -43,3 +43,4 @@ bool g_needsRedraw = false;
 char stringBuffer[512]{};
 
 int MENU_BAR_HEIGHT = 24;
+int g_oneWayAnimPhase = 1;
