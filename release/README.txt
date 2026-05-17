@@ -8,4 +8,4 @@ Included files:
 - SDL3.dll
 - SDL3_ttf.dll
 - graph/ assets
-- .kye level files
+- default.kye

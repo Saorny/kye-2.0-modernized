@@ -121,6 +121,23 @@ package:
 	cp /mingw64/bin/SDL3.dll $(DIST_DIR)/
 	cp /mingw64/bin/SDL3_ttf.dll $(DIST_DIR)/
 
+	cp /mingw64/bin/libstdc++-6.dll $(DIST_DIR)/
+	cp /mingw64/bin/libgcc_s_seh-1.dll $(DIST_DIR)/
+	cp /mingw64/bin/libwinpthread-1.dll $(DIST_DIR)/
+
+	cp /mingw64/bin/libharfbuzz-0.dll $(DIST_DIR)/ || true
+	cp /mingw64/bin/libfreetype-6.dll $(DIST_DIR)/ || true
+	cp /mingw64/bin/libpng16-16.dll $(DIST_DIR)/ || true
+	cp /mingw64/bin/zlib1.dll $(DIST_DIR)/ || true
+	cp /mingw64/bin/libbz2-1.dll $(DIST_DIR)/ || true
+	cp /mingw64/bin/libbrotlidec.dll $(DIST_DIR)/ || true
+	cp /mingw64/bin/libbrotlicommon.dll $(DIST_DIR)/ || true
+	cp /mingw64/bin/libintl-8.dll $(DIST_DIR)/ || true
+	cp /mingw64/bin/libiconv-2.dll $(DIST_DIR)/ || true
+	cp /mingw64/bin/libglib-2.0-0.dll $(DIST_DIR)/ || true
+	cp /mingw64/bin/libgraphite2.dll $(DIST_DIR)/ || true
+	cp /mingw64/bin/libpcre2-8-0.dll $(DIST_DIR)/ || true
+
 	echo "Kye 2.0 Modern SDL3 Port" > $(DIST_DIR)/README.txt
 	echo "" >> $(DIST_DIR)/README.txt
 	echo "How to run:" >> $(DIST_DIR)/README.txt
@@ -131,7 +148,7 @@ package:
 	echo "- SDL3.dll" >> $(DIST_DIR)/README.txt
 	echo "- SDL3_ttf.dll" >> $(DIST_DIR)/README.txt
 	echo "- graph/ assets" >> $(DIST_DIR)/README.txt
-	echo "- .kye level files" >> $(DIST_DIR)/README.txt
+	echo "- default.kye" >> $(DIST_DIR)/README.txt
 
 	cd $(DIST_DIR) && powershell -Command "Compress-Archive -Force * ../$(ZIP_NAME)"
 
