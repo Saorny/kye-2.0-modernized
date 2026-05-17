@@ -31,8 +31,8 @@ uint16_t g_activeSpawnerCount = 0;
 std::string g_helpContextFile = "kyehelp.hlp";
 
 using NotificationHandlerFn = void (*)(uint16_t eventCode, uint16_t handlerParam);
-extern uintptr_t g_handlerOrStateTable[];   // base == 0x1122 (en words dans le binaire)
-extern uint8_t  g_handlerParamTable[];     // base == 0x1134 (byte par index)
+extern uintptr_t g_handlerOrStateTable[];
+extern uint8_t  g_handlerParamTable[];
 
 std::int16_t baseX = 0;
 std::int16_t baseY = 0;
@@ -150,7 +150,7 @@ static void onDiamondCollected()
 
 static Uint32 g_pollEventType = 0;
 
-static constexpr Uint32 kPollingIntervalMs = 100; // 0x64
+static constexpr Uint32 kPollingIntervalMs = 100;
 
 SDL_Cursor* g_cursorArrow = nullptr;
 
@@ -230,6 +230,17 @@ void updateCountdownEntities()
 
 void moveAndRedrawEntity(int entityIndex, int newRow, int newCol)
 {
+    if (entityIndex < 0 ||
+        entityIndex >= static_cast<int>(g_gameState.entities.size()))
+    {
+        return;
+    }
+
+    if (newRow < 0 || newRow >= GRID_ROWS ||
+        newCol < 0 || newCol >= GRID_COLS)
+    {
+        return;
+    }
     auto& e = g_gameState.entities[entityIndex];
 
     drawRectangleFromGrid(e.row, e.col);
@@ -263,7 +274,6 @@ int tryApplyMagneticDisplacement(int entityIndex)
     const int row = s.entities[entityIndex].row;
     const int col = s.entities[entityIndex].col;
 
-    // Already held by a horizontal magnet
     {
         const int magnet = findEntityAt(row, col - 1);
         if (magnet >= 0 &&
@@ -282,7 +292,6 @@ int tryApplyMagneticDisplacement(int entityIndex)
         }
     }
 
-    // Already held by a vertical magnet
     {
         const int magnet = findEntityAt(row - 1, col);
         if (magnet >= 0 &&
@@ -311,7 +320,6 @@ int canMagnetMoveEntity(int entityIndex)
     const int row = s.entities[entityIndex].row;
     const int col = s.entities[entityIndex].col;
 
-    // Horizontal magnet 2 cells left -> move left 1
     {
         const int magnet = findEntityAt(row, col - 2);
         if (magnet >= 0 &&
@@ -324,7 +332,6 @@ int canMagnetMoveEntity(int entityIndex)
         }
     }
 
-    // Horizontal magnet 2 cells right -> move right 1
     {
         const int magnet = findEntityAt(row, col + 2);
         if (magnet >= 0 &&
@@ -336,8 +343,6 @@ int canMagnetMoveEntity(int entityIndex)
             return 1;
         }
     }
-
-    // Vertical magnet 2 cells above -> move up 1
     {
         const int magnet = findEntityAt(row - 2, col);
         if (magnet >= 0 &&
@@ -349,8 +354,6 @@ int canMagnetMoveEntity(int entityIndex)
             return 1;
         }
     }
-
-    // Vertical magnet 2 cells below -> move down 1
     {
         const int magnet = findEntityAt(row + 2, col);
         if (magnet >= 0 &&
@@ -630,7 +633,7 @@ std::int16_t addEntity(EntityType entityCode, std::int16_t row, std::int16_t col
 {
     const std::uint16_t index = g_activeSpawnerCount;
 
-    if (g_activeSpawnerCount >= 0x258)
+    if (g_activeSpawnerCount >= g_gameState.entities.size())
         return -1;
     g_gameState.entities[index].entityType = entityCode;
     g_gameState.entities[index].row = row;
@@ -909,11 +912,8 @@ void handleKyeMovement()
     {
         runTileSparkleEffect(2);
 
-        // ASM: push srcCol ; push srcRow ; call drawRectangleFromGrid
-        // => si ta signature est drawRectangleFromGrid(row, col), ça correspond à (srcRow, srcCol) legacy.
         drawRectangleFromGrid(currentRow, currentCol);
 
-        // Restore cursor position
         currentRow = previousRow;
         currentCol = previousCol;
 
@@ -931,8 +931,8 @@ void handleKyeMovement()
     const int dLegacyRow = previousRow - currentRow;
     const int dLegacyCol = previousCol - currentCol;
 
-    const int stepLegacyRow = sgn(dLegacyRow); // ax dans ASM
-    const int stepLegacyCol = sgn(dLegacyCol); // dx dans ASM
+    const int stepLegacyRow = sgn(dLegacyRow);
+    const int stepLegacyCol = sgn(dLegacyCol);
     processKyeCollision(stepLegacyRow, stepLegacyCol);
 }
 
@@ -970,7 +970,6 @@ int handleKyeMarkerBlock(int rowIndex, int colIndex)
 
     if (g_gameState.tileMap[pendingRow][pendingCol] == EntityType::EMPTY_CELL)
     {
-        // drawPendingKyeMarker();
         isPendingKyeMarkerDraw = 1;
     }
 
@@ -1567,7 +1566,6 @@ void handleSpecialSentinelClick()
 
     SDL_RaiseWindow(g_windowHandle2);
 
-    // force redraw
     SDL_Event ev{};
     ev.type = SDL_EVENT_WINDOW_EXPOSED;
     SDL_PushEvent(&ev);
@@ -1665,7 +1663,7 @@ void updateGridCell(int row, int col)
     }
     else if (tile == (int)EntityType::EMPTY_CELL)
     {
-        drawRectangleFromGrid(row, col); // case vide
+        drawRectangleFromGrid(row, col);
     }
     else
     {
@@ -1734,21 +1732,17 @@ void appendSuffixToPath(char* outPath, int outCapacity)
 {
     if (!outPath || outCapacity <= 0) return;
 
-    // longueur actuelle de la chaîne
     size_t len = std::strlen(outPath);
     if (len == 0) return;
 
-    // si la chaîne se termine déjà par '\' ou ':', ne rien faire
     if (outPath[len - 1] == '\\' || outPath[len - 1] == ':') {
         return;
     }
 
-    // copier le suffixe
     size_t suffixLen = std::strlen(g_defaultOpenSuffix);
 
-    // vérifier que ça rentre
     if (len + suffixLen >= static_cast<size_t>(outCapacity)) {
-        suffixLen = static_cast<size_t>(outCapacity) - len - 1; // garder place pour '\0'
+        suffixLen = static_cast<size_t>(outCapacity) - len - 1;
     }
 
     if (suffixLen > 0) {
@@ -2110,22 +2104,22 @@ void tickArrowDispensersEvery7Frames()
             switch (entity.entityType)
             {
                 case EntityType::SQUARE_ARROW_DISPENSER_RIGHT:
-                    spawnType = EntityType::SQUARE_ARROW_RIGHT;
+                    spawnType = EntityType::SQUARE_ARROW_DOWN;
                     targetRow = row + 1;
                     break;
 
                 case EntityType::SQUARE_ARROW_DISPENSER_UP:
-                    spawnType = EntityType::SQUARE_ARROW_UP;
+                    spawnType = EntityType::SQUARE_ARROW_RIGHT;
                     targetCol = col - 1;
                     break;
 
                 case EntityType::SQUARE_ARROW_DISPENSER_LEFT:
-                    spawnType = EntityType::SQUARE_ARROW_LEFT;
+                    spawnType = EntityType::SQUARE_ARROW_UP;
                     targetRow = row - 1;
                     break;
 
                 case EntityType::SQUARE_ARROW_DISPENSER_DOWN:
-                    spawnType = EntityType::SQUARE_ARROW_DOWN;
+                    spawnType = EntityType::SQUARE_ARROW_LEFT;
                     targetCol = col + 1;
                     break;
 
@@ -2154,22 +2148,22 @@ void tickArrowDispensersEvery7Frames()
             switch (entity.entityType)
             {
                 case EntityType::ROUNDED_ARROW_DISPENSER_RIGHT:
-                    spawnType = EntityType::ROUNDED_ARROW_RIGHT;
+                    spawnType = EntityType::ROUNDED_ARROW_DOWN;
                     targetRow = row + 1;
                     break;
 
                 case EntityType::ROUNDED_ARROW_DISPENSER_UP:
-                    spawnType = EntityType::ROUNDED_ARROW_UP;
+                    spawnType = EntityType::ROUNDED_ARROW_RIGHT;
                     targetCol = col - 1;
                     break;
 
                 case EntityType::ROUNDED_ARROW_DISPENSER_LEFT:
-                    spawnType = EntityType::ROUNDED_ARROW_LEFT;
+                    spawnType = EntityType::ROUNDED_ARROW_UP;
                     targetRow = row - 1;
                     break;
 
                 case EntityType::ROUNDED_ARROW_DISPENSER_DOWN:
-                    spawnType = EntityType::ROUNDED_ARROW_DOWN;
+                    spawnType = EntityType::ROUNDED_ARROW_LEFT;
                     targetCol = col + 1;
                     break;
 
@@ -2233,15 +2227,67 @@ void updateLevelVisualsAndAnimations()
 {
     animateMonsters();
     animateDiamonds();
-    // animateOneWayTilesEvery4Frames();
     tickArrowDispensersEvery7Frames();
     animateLava();
 }
+
+// void animateLava()
+// {
+//     if (frameCounter % 5 != 0)
+//         return;
+
+//     for (std::int16_t i = 0; i < g_activeSpawnerCount && i < g_gameState.entities.size(); ++i)
+//     {
+//         EntityInfo& entity = g_gameState.entities[i];
+
+//         if (entity.entityType != EntityType::Lava &&
+//             entity.entityType != EntityType::Lava2)
+//             continue;
+
+//         const int dstX = gridOriginX + entity.col * cellWidth;
+//         const int dstY = gridOriginY + entity.row * cellHeight;
+
+//         int srcX = 0;
+
+//         if (entity.entityType == EntityType::Lava)
+//             srcX = 8 * 16;
+//         else
+//             srcX = 9 * 16;
+
+//         const int srcY = (4 + entity.animFrame) * 16;
+
+//         SDL_FRect src{
+//             static_cast<float>(srcX),
+//             static_cast<float>(srcY),
+//             16.0f,
+//             16.0f
+//         };
+
+//         SDL_FRect dst{
+//             static_cast<float>(dstX),
+//             static_cast<float>(dstY),
+//             16.0f,
+//             16.0f
+//         };
+
+//         SDL_RenderTexture(g_renderer, g_sheetMobiles.tex, &src, &dst);
+
+//         if (entity.entityType == EntityType::Lava2 && entity.animFrame == 3)
+//         {
+//             entity.entityType = EntityType::Lava;
+//         }
+
+//         entity.animFrame = (entity.animFrame + 1) % 4;
+//     }
+// }
 
 void animateLava()
 {
     if (frameCounter % 5 != 0)
         return;
+
+    constexpr int LAVA_FRAME_HOLD = 4;
+    constexpr int LAVA_TOTAL_FRAMES = 4 * LAVA_FRAME_HOLD;
 
     for (std::int16_t i = 0; i < g_activeSpawnerCount && i < g_gameState.entities.size(); ++i)
     {
@@ -2251,32 +2297,44 @@ void animateLava()
             entity.entityType != EntityType::Lava2)
             continue;
 
+        const int visualFrame = entity.animFrame / LAVA_FRAME_HOLD;
+
         const int dstX = gridOriginX + entity.col * cellWidth;
         const int dstY = gridOriginY + entity.row * cellHeight;
 
-        const int srcX = 8 * 16;
-        const int srcY = (4 + entity.animFrame) * 16;
+        const int srcX =
+            entity.entityType == EntityType::Lava
+                ? 8 * 16
+                : 9 * 16;
+
+        const int srcY = (4 + visualFrame) * 16;
 
         SDL_FRect src{
-            (float)srcX,
-            (float)srcY,
+            static_cast<float>(srcX),
+            static_cast<float>(srcY),
             16.0f,
             16.0f
         };
 
         SDL_FRect dst{
-            (float)dstX,
-            (float)dstY,
+            static_cast<float>(dstX),
+            static_cast<float>(dstY),
             16.0f,
             16.0f
         };
 
         SDL_RenderTexture(g_renderer, g_sheetMobiles.tex, &src, &dst);
 
-        if (entity.entityType == EntityType::Lava2 && entity.animFrame == 3)
+        if (entity.entityType == EntityType::Lava2 &&
+            entity.animFrame >= LAVA_TOTAL_FRAMES - 1)
+        {
             entity.entityType = EntityType::Lava;
-
-        entity.animFrame = (entity.animFrame + 1) % 4;
+            entity.animFrame = 0;
+        }
+        else
+        {
+            entity.animFrame = (entity.animFrame + 1) % LAVA_TOTAL_FRAMES;
+        }
     }
 }
 
@@ -2504,7 +2562,6 @@ void handleDialogClose(NewLevelDialogResult result)
         return;
     }
 
-    // Accepted
     if (!g_levelInput.empty())
     {
         try
@@ -4284,66 +4341,66 @@ void handleMonsterEntityType(int entityIndex)
 }
 
 static constexpr std::array<EntityHandler, 60> ENTITY_HANDLERS = {{
-    handlePushableBrick,    // 0
-    handleSquareArrowUp,        // 1
-    handleSquareArrowDown,      // 2
-    handleSquareArrowLeft,      // 3
-    handleSquareArrowRight,     // 4
-    handleMagnetVertical,       // 5
-    handleMagnetHorizontal,     // 6
-    handlePusherUp,             // 7
-    handlePusherDown,           // 8
-    handlePusherLeft,           // 9
-    handlePusherRight,          // 10
-    handleRoundedArrowUp,        // 11
-    handleRoundedArrowDown,      // 12
-    handleRoundedArrowLeft,      // 13
-    handleRoundedArrowRight,     // 14
-    handleMonsterEntityType,    // 15
-    handleMonsterEntityType,    // 16
-    handleMonsterEntityType,    // 17
-    handleMonsterEntityType,    // 18
-    handleMonsterEntityType,    // 19
-    handlePushableBrick,   // 20
-    handlePushableBrick,   // 21
-    handlePushableBrick,   // 22
-    handlePushableBrick,   // 23
-    handlePushableBrick,   // 24
-    handlePushableBrick,   // 25
-    handleUnknownEntityType,   // 26
-    handleUnknownEntityType,   // 27
-    handleUnknownEntityType,   // 28
-    handleUnknownEntityType,   // 29
-    handleUnknownEntityType,   // 30
-    handleUnknownEntityType,   // 31
-    handleUnknownEntityType,   // 32
-    handleUnknownEntityType,   // 33
-    handleUnknownEntityType,   // 34
-    handleUnknownEntityType,   // 35
-    handleUnknownEntityType,   // 36
-    handleUnknownEntityType,   // 37
-    handleUnknownEntityType,   // 38
-    handleUnknownEntityType,   // 39
-    handleUnknownEntityType,   // 40
-    handleUnknownEntityType,   // 41
-    handleSmartEntityAlt,      // 42
-    handleSmartEntityAlt,      // 43
-    handleSmartEntityAlt,      // 44
-    handleSmartEntityAlt,      // 45
-    handleSmartEntityAlt,      // 46
-    handleSmartEntityAlt,       // 47
-    handleUnknownEntityType,    // 48
-    handleUnknownEntityType,    // 49
-    handleUnknownEntityType,    // 50
-    handleUnknownEntityType,    // 51
-    handleUnknownEntityType,    // 52
-    handleUnknownEntityType,    // 53
-    handleUnknownEntityType,    // 54
-    handleUnknownEntityType,    // 55
-    handleUnknownEntityType,    // 56
-    handleUnknownEntityType,    // 57
-    handleUnknownEntityType,    // 58
-    handleUnknownEntityType     // 59
+    handlePushableBrick,
+    handleSquareArrowUp,
+    handleSquareArrowDown,
+    handleSquareArrowLeft,
+    handleSquareArrowRight,
+    handleMagnetVertical,
+    handleMagnetHorizontal,
+    handlePusherUp,
+    handlePusherDown,
+    handlePusherLeft,
+    handlePusherRight,
+    handleRoundedArrowUp,
+    handleRoundedArrowDown,
+    handleRoundedArrowLeft,
+    handleRoundedArrowRight,
+    handleMonsterEntityType,
+    handleMonsterEntityType,
+    handleMonsterEntityType,
+    handleMonsterEntityType,
+    handleMonsterEntityType,
+    handlePushableBrick,
+    handlePushableBrick,
+    handlePushableBrick,
+    handlePushableBrick,
+    handlePushableBrick,
+    handlePushableBrick,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleSmartEntityAlt,
+    handleSmartEntityAlt,
+    handleSmartEntityAlt,
+    handleSmartEntityAlt,
+    handleSmartEntityAlt,
+    handleSmartEntityAlt,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType,
+    handleUnknownEntityType
 }};
 
 void gameMainLoopTick()
@@ -4364,16 +4421,6 @@ void gameMainLoopTick()
 
         if (entityType <= EntityType::COUNTDOWN_9)
         {
-            // std::cout
-            // << "ENTITY "
-            // << entityIndex
-            // << " type="
-            // << (int)g_gameState.entities[entityIndex].entityType
-            // << " row="
-            // << g_gameState.entities[entityIndex].row
-            // << " col="
-            // << g_gameState.entities[entityIndex].col
-            // << std::endl;
             ENTITY_HANDLERS[(int)entityType](entityIndex);
         }
         else

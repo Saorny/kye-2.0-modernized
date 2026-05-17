@@ -34,8 +34,8 @@ static std::vector<MenuDefinition> buildMenus()
         {
             ActiveMenu::Game,
             "Game",
-            SDL_Rect{ 24, 0, 72, 24 },
-            SDL_Rect{ 24, 24, 148, 70 },
+            SDL_Rect{ 0, 0, 64, 24 },
+            SDL_Rect{ 0, 24, 148, 70 },
             {
                 { "New Game", MenuCommand::NewGame, true },
                 { "Exit",     MenuCommand::Quit,    true },
@@ -44,24 +44,24 @@ static std::vector<MenuDefinition> buildMenus()
         {
             ActiveMenu::Level,
             "Level",
-            SDL_Rect{ 104, 0, 82, 24 },
-            SDL_Rect{ 104, 24, 218, 132 },
+            SDL_Rect{ 64, 0, 72, 24 },
+            SDL_Rect{ 64, 24, 218, 132 },
             {
-                { "Restart level", MenuCommand::Restart,   true },
+                { "Restart level", MenuCommand::Restart, true },
                 { "Goto level...", MenuCommand::GotoLevel, true },
-                { "File...",       MenuCommand::OpenFile,      true },
-                { "Edit",          MenuCommand::EnterEditMode,   false },
+                { "File...", MenuCommand::OpenFile, true },
+                { "Edit", MenuCommand::EnterEditMode, false },
             }
         },
         {
             ActiveMenu::Help,
             "Help",
-            SDL_Rect{ 192, 0, 72, 24 },
-            SDL_Rect{ 192, 24, 130, 96 },
+            SDL_Rect{ 136, 0, 64, 24 },
+            SDL_Rect{ 136, 24, 130, 96 },
             {
-                { "Help",  MenuCommand::Help,  true },
+                { "Help", MenuCommand::Help, true },
                 { "About", MenuCommand::About, true },
-                { "What?", MenuCommand::What,  true },
+                { "What?", MenuCommand::What, true },
             }
         },
     };
@@ -101,15 +101,87 @@ static void drawRectBorder(const SDL_Rect& r, Uint8 red, Uint8 green, Uint8 blue
     SDL_RenderRect(g_renderer, &fr);
 }
 
-static void drawMenuText(int x, int y, const char* text, bool enabled)
+static void drawMenuText(int x, int y, const char* text, bool enabled, bool selected)
 {
-    if (!text)
+    if (!g_font || !g_renderer || !text)
         return;
 
-    if (enabled)
-        drawTextAt(static_cast<std::int16_t>(x), static_cast<std::int16_t>(y), text, static_cast<int>(std::strlen(text)));
+    SDL_Color color;
+
+    if (!enabled)
+        color = SDL_Color{180, 180, 180, 255};
+    else if (selected)
+        color = SDL_Color{255, 255, 255, 255};
     else
-        drawTextAt(static_cast<std::int16_t>(x), static_cast<std::int16_t>(y), text, static_cast<int>(std::strlen(text)));
+        color = SDL_Color{0, 0, 0, 255};
+
+    SDL_Surface* surface = TTF_RenderText_Solid(
+        g_font,
+        text,
+        std::strlen(text),
+        color
+    );
+
+    if (!surface)
+        return;
+
+    const int w = surface->w;
+    const int h = surface->h;
+
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(g_renderer, surface);
+    SDL_DestroySurface(surface);
+
+    if (!texture)
+        return;
+
+    SDL_FRect dst{
+        static_cast<float>(x),
+        static_cast<float>(y),
+        static_cast<float>(w),
+        static_cast<float>(h)
+    };
+
+    SDL_RenderTexture(g_renderer, texture, nullptr, &dst);
+    SDL_DestroyTexture(texture);
+}
+
+static void drawMenuTitleText(int x, int y, const char* text, bool selected)
+{
+    if (!g_font || !g_renderer || !text)
+        return;
+
+    SDL_Color color = selected
+        ? SDL_Color{255, 255, 255, 255}
+        : SDL_Color{0, 0, 0, 255};
+
+    SDL_Surface* surface = TTF_RenderText_Solid(
+        g_font,
+        text,
+        std::strlen(text),
+        color
+    );
+
+    if (!surface)
+        return;
+
+    const int w = surface->w;
+    const int h = surface->h;
+
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(g_renderer, surface);
+    SDL_DestroySurface(surface);
+
+    if (!texture)
+        return;
+
+    SDL_FRect dst{
+        static_cast<float>(x),
+        static_cast<float>(y),
+        static_cast<float>(w),
+        static_cast<float>(h)
+    };
+
+    SDL_RenderTexture(g_renderer, texture, nullptr, &dst);
+    SDL_DestroyTexture(texture);
 }
 
 static MenuDefinition* findMenu(std::vector<MenuDefinition>& menus, ActiveMenu menu)
@@ -152,9 +224,17 @@ void drawMenuBar()
     SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
     SDL_RenderRect(g_renderer, &bar);
 
-    drawTextAt(8, 4, "Game", 4);
-    drawTextAt(72, 4, "Level", 5);
-    drawTextAt(144, 4, "Help", 4);
+    auto menus = buildMenus();
+
+    for (const auto& menu : menus)
+    {
+        if (menu.menu == g_activeMenu)
+            drawFilledRect(menu.titleRect, 0, 0, 180);
+    }
+
+    drawMenuTitleText(8,   4, "Game",  g_activeMenu == ActiveMenu::Game);
+    drawMenuTitleText(72,  4, "Level", g_activeMenu == ActiveMenu::Level);
+    drawMenuTitleText(144, 4, "Help",  g_activeMenu == ActiveMenu::Help);
 
     drawActiveMenuPopup();
 }
@@ -193,7 +273,8 @@ void drawActiveMenuPopup()
             itemRect.x + 24,
             itemRect.y + 4,
             item.label,
-            item.enabled
+            item.enabled,
+            i == g_hoveredMenuItem
         );
     }
 }

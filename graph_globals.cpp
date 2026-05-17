@@ -44,3 +44,6 @@ char stringBuffer[512]{};
 
 int MENU_BAR_HEIGHT = 24;
 int g_oneWayAnimPhase = 1;
+
+int WINDOW_W = GRID_COLS * 16;
+int WINDOW_H = MENU_BAR_HEIGHT + GRID_ROWS * 16 + 25;

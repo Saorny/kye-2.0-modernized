@@ -162,4 +162,7 @@ void renderStaticObjects(int row, int col, EntityType tileValue);
 void runTileSparkleEffect(int effectId);
 void renderSparkleTileAndPresent(int sparkleCount);
 
+extern int WINDOW_W;
+extern int WINDOW_H;
+
 #endif // GRAPH_H

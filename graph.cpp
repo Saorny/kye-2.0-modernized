@@ -51,7 +51,6 @@ bool loadSpriteSheets()
     g_sheetMobiles  = loadBmpSheet(g_renderer, "graph/graph_mobiles.bmp",  16, 16);
     g_sheetStatics  = loadBmpSheet(g_renderer, "graph/graph_statics.bmp",  16, 16);
     g_font = TTF_OpenFont("graph/font3.ttf", 16);
-    cout << "g_font => " << g_font << endl;
     std::cout << "Statics sheet size = "
           << g_sheetStatics.w << " x "
           << g_sheetStatics.h << std::endl;
@@ -419,13 +418,17 @@ void renderEntity(int entityIndex)
     }
     else if (type == EntityType::Lava)
     {
+        const int visualFrame = entity.animFrame / 4;
+
         srcX = 8.0f * 16.0f;
-        srcY = 4.0f * 16.0f;
+        srcY = (4.0f + visualFrame) * 16.0f;
     }
     else if (type == EntityType::Lava2)
     {
+        const int visualFrame = entity.animFrame / 4;
+
         srcX = 9.0f * 16.0f;
-        srcY = 4.0f * 16.0f;
+        srcY = (4.0f + visualFrame) * 16.0f;
     }
     else if (type >= EntityType::SQUARE_ARROW_DISPENSER_RIGHT && type <= EntityType::SQUARE_ARROW_DISPENSER_DOWN)
     {

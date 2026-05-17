@@ -8,7 +8,7 @@ CXX = g++
 # Target
 # ======================================
 
-TARGET = editor
+TARGET = kye.exe
 
 # ======================================
 # Source files
@@ -35,22 +35,29 @@ DEPS = $(SRCS:.cpp=.d)
 DEPS := $(DEPS:.c=.d)
 
 # ======================================
-# Compiler flags
+# Package files
+# ======================================
+
+DIST_DIR = release
+ZIP_NAME = kye2-modern-win64.zip
+
+ASSET_DIRS = graph
+LEVEL_FILES = default.kye
+
+# ======================================
+# Compiler / linker flags
 # ======================================
 
 CXXFLAGS = -std=gnu++17 -Wall -Wextra -pedantic
-
-# Debug build
 DEBUGFLAGS = -g -O0
+RELEASEFLAGS = -O2 -DNDEBUG -s
 
-# Release build
-RELEASEFLAGS = -O2
-
-# SDL flags via pkg-config
 SDL_CFLAGS = $(shell pkg-config --cflags sdl3 sdl3-ttf)
-SDL_LIBS   = $(filter-out -mwindows,$(shell pkg-config --libs sdl3 sdl3-ttf)) -lcomdlg32
+SDL_LIBS   = $(filter-out -mwindows,$(shell pkg-config --libs sdl3 sdl3-ttf))
 
 CXXFLAGS += $(SDL_CFLAGS)
+
+LIBS = $(SDL_LIBS) -lcomdlg32 -lole32
 
 # ======================================
 # Default target
@@ -70,6 +77,7 @@ debug: $(TARGET)
 # ======================================
 
 release: CXXFLAGS += $(RELEASEFLAGS)
+release: LDFLAGS += -mwindows
 release: $(TARGET)
 
 # ======================================
@@ -77,7 +85,7 @@ release: $(TARGET)
 # ======================================
 
 $(TARGET): $(OBJS)
-	$(CXX) $(OBJS) -o $@ $(SDL_LIBS) -lole32
+	$(CXX) $(OBJS) -o $@ $(LIBS) $(LDFLAGS)
 
 # ======================================
 # Compilation
@@ -90,10 +98,42 @@ $(TARGET): $(OBJS)
 	$(CXX) $(CXXFLAGS) -MMD -MP -c $< -o $@
 
 # ======================================
-# Include dependencies
+# Dependencies
 # ======================================
 
 -include $(DEPS)
+
+# ======================================
+# Windows package
+# ======================================
+
+package:
+	$(MAKE) clean
+	$(MAKE) release
+	rm -rf $(DIST_DIR)
+	rm -f $(ZIP_NAME)
+	mkdir -p $(DIST_DIR)
+
+	cp $(TARGET) $(DIST_DIR)/
+	cp -r $(ASSET_DIRS) $(DIST_DIR)/
+	cp $(LEVEL_FILES) $(DIST_DIR)/
+
+	cp /mingw64/bin/SDL3.dll $(DIST_DIR)/
+	cp /mingw64/bin/SDL3_ttf.dll $(DIST_DIR)/
+
+	echo "Kye 2.0 Modern SDL3 Port" > $(DIST_DIR)/README.txt
+	echo "" >> $(DIST_DIR)/README.txt
+	echo "How to run:" >> $(DIST_DIR)/README.txt
+	echo "Double-click kye.exe." >> $(DIST_DIR)/README.txt
+	echo "" >> $(DIST_DIR)/README.txt
+	echo "Included files:" >> $(DIST_DIR)/README.txt
+	echo "- kye.exe" >> $(DIST_DIR)/README.txt
+	echo "- SDL3.dll" >> $(DIST_DIR)/README.txt
+	echo "- SDL3_ttf.dll" >> $(DIST_DIR)/README.txt
+	echo "- graph/ assets" >> $(DIST_DIR)/README.txt
+	echo "- .kye level files" >> $(DIST_DIR)/README.txt
+
+	cd $(DIST_DIR) && powershell -Command "Compress-Archive -Force * ../$(ZIP_NAME)"
 
 # ======================================
 # Clean
@@ -102,29 +142,12 @@ $(TARGET): $(OBJS)
 clean:
 	rm -f $(OBJS) $(DEPS) $(TARGET)
 
-rebuild: clean all
+rebuild:
+	$(MAKE) clean
+	$(MAKE) all
 
 # ======================================
-# macOS app bundle
+# Phony
 # ======================================
 
-bundle: release
-
-	mkdir -p release/Contents/MacOS
-	mkdir -p release/Contents/Resources
-
-	cp $(TARGET) release/Contents/MacOS/
-	chmod +x release/Contents/MacOS/$(TARGET)
-
-	echo '<?xml version="1.0" encoding="UTF-8"?>' > release/Contents/Info.plist
-	echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' >> release/Contents/Info.plist
-	echo '<plist version="1.0">' >> release/Contents/Info.plist
-	echo '<dict>' >> release/Contents/Info.plist
-	echo '  <key>CFBundleExecutable</key>' >> release/Contents/Info.plist
-	echo '  <string>$(TARGET)</string>' >> release/Contents/Info.plist
-	echo '</dict>' >> release/Contents/Info.plist
-	echo '</plist>' >> release/Contents/Info.plist
-
-	xattr -cr release
-
-	echo "App bundle created in ./release"
+.PHONY: all debug release clean rebuild package

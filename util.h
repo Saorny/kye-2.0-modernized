@@ -54,10 +54,13 @@ struct FarPtr {
 };
 
 void copyFarBytes(FarPtr src, FarPtr dst, uint16_t count);
-inline bool isDigit(char c);
 uint16_t generateChangeSpeed();
 bool isInsideGrid(int row, int col);
 std::uint32_t getCellId(int row, int col);
 uint16_t divide64_unsigned(uint64_t value);
+inline bool isDigit(char c)
+{
+    return c >= '0' && c <= '9';
+}
 
 #endif // UTIL_H

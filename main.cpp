@@ -16,13 +16,11 @@
 #include "error.h"
 #include "util.h"
 #include "time.h"
-#include "system.h"
-#include "memory.h"
+#include "menu.h"
 
 int main(int argc, char** argv)
 {
     cout << "Starting" << endl;
-    std::cout << "Available video drivers:" << std::endl;
 
     for (int i = 0; i < SDL_GetNumVideoDrivers(); ++i)
     {
@@ -38,12 +36,14 @@ int main(int argc, char** argv)
         std::cout << "TTF init failed: " << SDL_GetError() << std::endl;
         return 1;
     }
-    if (!SDL_CreateWindowAndRenderer("Kye (Modern)", 1280, 720, 0, &g_window, &g_renderer))
+    std::cout << "WINDOW SIZE = " << WINDOW_W << "x" << WINDOW_H << std::endl;
+    if (!SDL_CreateWindowAndRenderer("Kye (Modern)", WINDOW_W, WINDOW_H, 0, &g_window, &g_renderer))
     {
         cout << "SDL window error: " << SDL_GetError() << endl;
         SDL_Quit();
         return 255;
     }
+
     cout << "SDL Window Created!" << endl;
     initTickCounter();
     cout << "runLegacyCallbackQueue" << endl;
@@ -78,6 +78,7 @@ int main(int argc, char** argv)
             tickLevelFlow();
             handlePaintOrRenderRequest();
             updateLevelVisualsAndAnimations();
+            drawMenuBar();
             SDL_RenderPresent(g_renderer);
         }
         SDL_Delay(16);

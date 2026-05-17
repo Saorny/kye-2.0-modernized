@@ -39,11 +39,6 @@ static bool isAllDigits(std::string_view s) noexcept {
     return !s.empty() && std::all_of(s.begin(), s.end(), [](char c){ return isDigit(c); });
 }
 
-
-inline bool isDigit(char c) {
-    return std::isdigit(static_cast<unsigned char>(c)) != 0;
-}
-
 static std::optional<int32_t> parseSignedInt32(std::string_view s)
 {
     // trim minimal
