@@ -1,5 +1,3 @@
-Voici un README complet, prêt à mettre dans README.md.
-
 # Kye 2.0 Modern
 
 **Kye 2.0 Modern** is an unofficial, free, non-commercial SDL3 preservation port of **Kye**, the classic puzzle game originally created by **Colin Garbutt** in 1992.
